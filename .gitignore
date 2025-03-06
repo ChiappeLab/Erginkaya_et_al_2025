@@ -1,0 +1,8 @@
+# Files and Folders included here are not uploaded to GitHub
+
+data/Preprocessed\ Data
+data/*zip
+results
+scripts
+download_data_linux.sh
+download_data_windows.bat
