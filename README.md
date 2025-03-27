@@ -35,12 +35,17 @@ This repository contains the accompanying code and raw data associated with the 
 |
 | results/
 | ├── matlab_outputs/                            # Outputs from MATLAB script           
-| └── r_outputs/                                 # Outputs from R script
+| |
+| └── r_outputs/                                 # Outputs from R scripts
+|      ├── diads_triads_analysis/                  # Outputs from the Diads and Triads analysis
+|      ├── inputs_analysis/                        # Outputs from the Inputs analysis
+|      ├── outputs_analysis/                       # Outputs from the Outputs analysis
+|      └── rootpoint_analysis/                     # Outputs from the rootpoint analysis
 |
 | scripts/
-| ├── matlab/
-| |    ├── CaImagingPopulationAnalysis240808.m   # Main analysis and plotting script
-| |    └── helpers/                              # Helper functions for the main script
+| ├── matlab/                                    # Matlab scripts
+| |    ├── CaImagingPopulationAnalysis240808.m     # Main analysis and plotting script
+| |    └── helpers/                                # Helper functions for the main script
 | |
 | └── r/                                         # Folder Containing .R scripts used for figures 
 |
