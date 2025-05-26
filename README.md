@@ -15,9 +15,11 @@ $^{8}$ Lead contact
 $^{*}$ Correspondence should be addressed to [eugenia.chiappe@neuro.fchampalimaud.org](mailto:eugenia.chiappe@neuro.fchampalimaud.org)
 
 **Published in:**  
-*Nature Neuroscience, 2025*
-
+*Nature Neuroscience, 2025*\
 **DOI:** [10.1038/s41593-025-01948-9](https://doi.org/10.1038/s41593-025-01948-9)
+
+**Zenodo data repository:**\
+[https://doi.org/10.5281/zenodo.14967806](https://doi.org/10.5281/zenodo.14967806)
 
 ---
 
@@ -80,8 +82,9 @@ cd your-publication-repo
 
 ### Step 2: Download large Data
 
-Large data files are hosted externally in Zenodo and can be downloaded using the provided scripts. or manually from the Zenodo repository and place the contents in repository directory.
+Large data files are hosted externally in Zenodo and can be downloaded using the provided download scripts for linux or windows based systems. Users can also download manually from the Zenodo repository and place the contents in the repository directory.
 
+**Zenodo data repository:**\
 [https://doi.org/10.5281/zenodo.14967806](https://doi.org/10.5281/zenodo.14967806) 
 
 #### 2.1 Linux/macOS
@@ -122,6 +125,7 @@ Once the data is downloaded and placed into the correct folders, you can open MA
 
 Note:
 Be sure to add repository path to MATLAB path due to the use of helper functions.
+
 ---
 
 ## 🐝 License
