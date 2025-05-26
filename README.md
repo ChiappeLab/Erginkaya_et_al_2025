@@ -15,39 +15,38 @@ $^{8}$ Lead contact
 $^{*}$ Correspondence should be addressed to [eugenia.chiappe@neuro.fchampalimaud.org](mailto:eugenia.chiappe@neuro.fchampalimaud.org)
 
 **Published in:**  
-*Journal Name, Year*
+*Nature Neuroscience, 2025*
 
-**DOI:** [10.xxxx/xxxxxxx](link_to_doi)
+**DOI:** [10.1038/s41593-025-01948-9](https://doi.org/10.1038/s41593-025-01948-9)
 
 ---
 
 ## Overview
-This repository contains the accompanying code and raw data associated with the publication “A Competitive Disinhibitory Network for Robust Optic Flow Processing in Drosophila.” It includes MATLAB scripts for data analysis, as well as scripts to download large data files from Zenodo.
+This repository contains the accompanying code and raw data associated with the publication “A Competitive Disinhibitory Network for Robust Optic Flow Processing in Drosophila.” 
 
 ---
 
 ## 📁 Repository Structure
 
 ```
-| data/
-| ├── raw/                                       # 
-| └── Preprocessed Data/                         # For MATLAB  
-|
-| results/
-| ├── matlab_outputs/                            # Outputs from MATLAB script           
-| |
-| └── r_outputs/                                 # Outputs from R scripts
-|      ├── diads_triads_analysis/                  # Outputs from the Diads and Triads analysis
-|      ├── inputs_analysis/                        # Outputs from the Inputs analysis
-|      ├── outputs_analysis/                       # Outputs from the Outputs analysis
-|      └── rootpoint_analysis/                     # Outputs from the rootpoint analysis
-|
 | scripts/
-| ├── matlab/                                    # Matlab scripts
-| |    ├── CaImagingPopulationAnalysis240808.m     # Main analysis and plotting script
-| |    └── helpers/                                # Helper functions for the main script
+| ├── matlab/                                  # Folder containing MATLAB scripts
+| |    ├── PaperFiguresImaging.m                 # Main analysis and plotting script
+| |    ├── PaperFiguresBehavior.m                # Behavior analysis and plotting script
+| |    ├── Figure1b.m                            # Figure 1b plotting script
+| |    └── helper-functions/                     # Helper functions for the scripts
 | |
-| └── r/                                         # Folder Containing .R scripts used for figures 
+| └── r/                                       # Folder Containing .R scripts used for figures 
+|      ├── 01_neuropil_analysis_outputs.Rmd      # R script for neuropil outputs analysis
+|      ├── 02_neuropil_analysis_inputs.Rmd       # R script for neuropil inputs analysis 
+|      ├── 03_proportion_diads_triads.Rmd        # R script for analysis of diads and triads
+|      ├── 04_rootpoint_dist.Rmd                 # R script for rootpoint distance analysis
+|      └── README.md                             # Acknowledgements and instructions for R scripts
+|
+| data/                                       # Folder containing data files located in Zenodo
+| ├── Behavior/                                  # Behavior data for matlab scripts
+| ├── feather_files/                             # Feather files for R scripts
+| └── Preprocessed Data/                         # Preprocessed data for matlab scripts
 |
 | download_data_linux.sh                         # Script to download data on Linux/macOS
 | download_data_windows.bat                      # Script to download data on Windows
@@ -66,8 +65,8 @@ You can clone the repository in two ways:
 #### 1.1 Command Line
 
 ```bash
-git clone https://github.com/ChiappeLab/Erginkaya_et_al_2025.git
-cd Erginkaya_et_al_2025
+git clone https://github.com/your-username/your-publication-repo.git
+cd your-publication-repo
 ```
 
 #### 1.2 GitHub Desktop
@@ -81,8 +80,9 @@ cd Erginkaya_et_al_2025
 
 ### Step 2: Download large Data
 
-Large data files are hosted externally in Zenodo and can be downloaded using the provided scripts or directly from the Zenodo repository and added to the data folder from the following link:
-- DOI: [10.5281/zenodo.14967806](10.5281/zenodo.14967806)
+Large data files are hosted externally in Zenodo and can be downloaded using the provided scripts. or manually from the Zenodo repository and place the contents in repository directory.
+
+[https://doi.org/10.5281/zenodo.14967806](https://doi.org/10.5281/zenodo.14967806) 
 
 #### 2.1 Linux/macOS
 
@@ -104,26 +104,24 @@ Large data files are hosted externally in Zenodo and can be downloaded using the
    chmod +x download_data_linux.sh
    ./download_data_linux.sh
    ```
-   This will download and place the files into the appropriate folders (e.g., `data/Preprocessed Data/`).
+   This will download and place the files into the appropriate folders (e.g. `data/Preprocessed Data/`).
 
 #### 2.2 Windows
 
 1. Double click the `download_data_windows.bat` press any key if prompted and wait for Download to finish
 
-This will download and place the files into the appropriate folders (e.g., e.g., `data/Preprocessed Data/`).
+This will download and place the files into the appropriate folders (e.g. `data/Preprocessed Data/`).
+
+
 
 ---
 
-### Step 3: Run the Main Script in MATLAB
+### Step 3: Run the desired scripts
 
-Once the data is downloaded and placed into the correct folders, you can open MATLAB, add the entire repository folder to PATH and run the analysis script:
+Once the data is downloaded and placed into the correct folders, you can open MATLAB or R scripts, and run the analysis. 
 
-```matlab
-run('scripts/matlab/CaImagingPopulationAnalysis240808.m')
-```
-
-This script will handle preprocessing, analysis, and plotting of results as described in the publication.
-
+Note:
+Be sure to add repository path to MATLAB path due to the use of helper functions.
 ---
 
 ## 🐝 License

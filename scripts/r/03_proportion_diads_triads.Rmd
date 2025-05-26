@@ -1,0 +1,475 @@
+---
+title: "Proportion of diads and triads"
+author: "Filipa Torrão & Eugenia Chiappe"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+## Setup and Libraries
+```{r}
+library(tibble)
+library(fafbseg)
+#if (!require("devtools")) install.packages("devtools")
+#devtools::install_github("jefferislab/catnat")
+library(catnat)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+distance_between <- function(n, from, to, identifier.type=c("index", "pointno"), ...) {
+  identifier.type=match.arg(identifier.type)
+  ng=as.ngraph(n, weights=T)
+  if(identifier.type=='pointno') {
+    from=match(from, n$d$PointNo)
+    to=match(to, n$d$PointNo)
+  }
+  dd=igraph::distances(ng, v=from, to=to, ...)
+  dd
+}
+
+# Create the output directory (two levels above) for plots and CSV files
+output_dir <- file.path("..", "..", "results","r_results","03_diads_triads_analysis")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+## Data Preparation and Login
+```{r}
+conn = catmaid_login(server="https://fafb.catmaid.virtualflybrain.org/")
+bips_fafbseg<- read.neuron.catmaid(3029743)
+threshold_for_distances<- 20
+dist_number<-1865.554
+all_together_for_h2_bips_multiple_thresholds<- data.frame()
+n_h2_to_bips_diads_multiple_thresholds<- data.frame()
+different_thresholds<- c(seq(525.745,dist_number+8000, by= 500),dist_number)
+
+n_triads<- c()
+bips_points_fafbseg<- xyzmatrix(bips_fafbseg[["d"]]) #gets the xyz matrix for all the bips points
+syn_from_bips<- filter(catmaid_get_connector_table(c(9730353,3029743)), direction=="incoming") #gets all incoming synapses onto bips
+syn_from_bips<- filter(syn_from_bips, skid == "3029743") #gets all incoming synapses onto bips
+#h2_ids
+h2_to_bips<- filter(syn_from_bips, partner_skid=="5232902",confidence >3)
+
+h2rn_to_bips<- filter(syn_from_bips, partner_skid=='8178073'|
+                         partner_skid=='8438889'|
+                         partner_skid=='9730353'|
+                         partner_skid=='11930921'|
+                         partner_skid=='11956980'|
+                         partner_skid=='12036568', confidence >3)
+h2_idss<- c(5232902)
+```
+
+##Diads Analysis
+```{r}
+  n_triads<- c()
+  triads_list<- data.frame()
+  n_h2_to_bips_in_triads_df<- data.frame()
+  n_h2_to_bips_in_bips_diads_df<- data.frame()
+  n_h2_to_bips_in_h2_diads_df<- data.frame()
+  n_h2_to_bips_df<- data.frame()
+  h2_bips_dnap15_diads<- data.frame()
+  h2_bips_h2_diads<- data.frame()
+
+  connectors_to_bips<- catmaid_get_connectors_between(post_skids = c(3029743)) #gets list of all connectors with bips as postsyn
+  #connectors_to_h2<- catmaid_get_connectors_between(post_skids = h2_id) #gets list of all connectors with h2 as postsyn  
+    
+  for (h2_ids in h2_idss){
+    
+    #####----bips diads------#######
+    
+    
+    connectors_to_bips_from_2nd_element<- catmaid_get_connectors_between(pre_skids = h2_ids ,post_skids = c(3029743)) #gets list of all connectors with bips as postsyn and h2 as presyn
+    connectors_to_bips_from_3rd_element<- as.data.frame(catmaid_get_connectors_between(post_skids = c(3029743)))
+    connectors_to_bips_from_3rd_element<- filter(connectors_to_bips_from_3rd_element, connectors_to_bips_from_3rd_element$pre_skid != h2_ids) #gets list of all connectors with bips as postsyn, but not h2 as presyn
+    
+    #will now calculate the distance between each connector node to h2 and each connector node to bips for every cell that syns both into h2 and bips
+    distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element<-as.data.frame(distance_between(bips_fafbseg, from = as.character(unique(connectors_to_bips_from_2nd_element$post_node_id)), 
+                                                                                                    to=as.character(unique(connectors_to_bips_from_3rd_element$post_node_id)),
+                                                                                                    identifier.type = "pointno",
+                                                                                                    mode="all"))
+    
+    #getting node id for the synapses onto bips that are in proximity 
+    diad_nodes<- distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element[colSums(distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element < dist_number) > 0] #these are the names of the nodes synapsing onto h2 and bips that are close to each other on the body of each cell
+    
+    n_diads_on_bips<- diad_nodes[rowSums(diad_nodes < dist_number) > 0, ] #the number of diads
+    
+    number_of_h2_to_bips_in_bips_diads<- nrow(n_diads_on_bips)
+    n_h2_to_bips_in_bips_diads_df<- rbind(n_h2_to_bips_in_bips_diads_df, number_of_h2_to_bips_in_bips_diads)
+    
+    diad_nodes<- as.list(diad_nodes)
+    n_diads_on_bips<- lapply(diad_nodes, function(x) length(x[x<dist_number]))
+    
+    number_of_h2_to_bips_per_cell_connector<- as.data.frame(do.call(rbind, n_diads_on_bips)) #turn into df
+    
+    rownames(number_of_h2_to_bips_per_cell_connector) <- gsub("X", "", rownames(number_of_h2_to_bips_per_cell_connector)) #cleaning the X that is in the rownames
+    
+    number_of_h2_to_bips_per_cell_connector$third_element<- rownames(number_of_h2_to_bips_per_cell_connector) #turning rownames into column
+    
+    number_of_h2_to_bips_per_cell_connector$third_element<- by(number_of_h2_to_bips_per_cell_connector, seq_len(nrow(number_of_h2_to_bips_per_cell_connector)), 
+                                                                function(row) filter(connectors_to_bips, post_node_id %in% row$third_element)$pre_skid) #these are the names of the cells whose nodes participate in triads with h2 and bips
+    number_of_h2_to_bips_per_cell_connector$third_element<- as.character(number_of_h2_to_bips_per_cell_connector$third_element)
+    
+    number_of_h2_to_bips_per_cell_connector<-separate_rows(number_of_h2_to_bips_per_cell_connector,third_element,convert = T)
+    number_of_h2_to_bips_per_cell_connector<-subset(number_of_h2_to_bips_per_cell_connector, nchar(as.character(third_element)) > 3)
+    number_of_h2_to_bips_per_cell_connector$third_element_name<- catmaid_get_neuronnames(number_of_h2_to_bips_per_cell_connector$third_element) #gets names of the third element in the triad
+    number_of_h2_to_bips_per_cell_connector$Cell<- "Third element of triad"
+    number_of_h2_to_bips_per_cell_connector$h2<- as.character(h2_ids)
+    
+    test_regex<- str_split(number_of_h2_to_bips_per_cell_connector$third_element_name, boundary("word"), simplify = T)
+    number_of_h2_to_bips_per_cell_connector$family_name<- as.data.frame(str_split(number_of_h2_to_bips_per_cell_connector$third_element_name, boundary("word"), simplify = T))$V2 #getting the family of cells
+    number_of_h2_to_bips_per_cell_connector$family_name[number_of_h2_to_bips_per_cell_connector$family_name %!in% c("H2rn", "uLPTCrn","bIPS","cLPTCrn", "H2","HSE","HSN","HSS")] <- "Other" #assess manually this
+    
+    h2_bips_dnap15_diads<-rbind(h2_bips_dnap15_diads, number_of_h2_to_bips_per_cell_connector)
+    
+    p1 <- ggplot(number_of_h2_to_bips_per_cell_connector, aes(x = Cell, y = V1)) +
+      geom_bar(
+        aes(color = family_name, fill = family_name),
+        stat = "identity", position = position_stack()
+      ) +
+      ylab("Number of bips Diads")+
+      xlab("T=1865.55 nm")
+    print(p1)
+    ggsave(filename = file.path(output_dir, "Number of bips Diads.png"), plot = p1, width = 6, height = 4)
+    
+    number_of_h2_to_bips_per_cell_connector %>% group_by(family_name) %>% count(wt= V1) #summary of data
+    
+    #####----h2 diads------#######
+    
+    
+    connectors_to_h2<- catmaid_get_connectors_between(post_skids = h2_ids)
+    h2_fafbseg<- read.neuron.catmaid(h2_ids)
+    
+    connectors_to_bips_from_2nd_element<- catmaid_get_connectors_between(pre_skids = h2_ids ,post_skids = c(3029743)) #gets list of all connectors with bips as postsyn and h2 as presyn
+    connectors_to_h2_from_3rd_element<- as.data.frame(catmaid_get_connectors_between(post_skids = h2_ids))
+    
+    #will now calculate the distance between each connector node to h2 and each connector node to bips for every cell that syns both into h2 and bips
+    distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element<-as.data.frame(distance_between(h2_fafbseg, from = as.character(unique(connectors_to_bips_from_2nd_element$pre_node_id)), 
+                                                                                                    to=as.character(unique(connectors_to_h2_from_3rd_element$post_node_id)),
+                                                                                                    identifier.type = "pointno",
+                                                                                                    mode="all"))
+    
+    #getting node id for the synapses onto bips that are in proximity 
+    diad_nodes<- distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element[colSums(distances_between_nodes_of_syn_to_bips_from_h2_and_3rd_element < dist_number) > 0] #these are the names of the nodes synapsing onto h2 and bips that are close to each other on the body of each cell
+    
+    n_diads_on_bips<- diad_nodes[rowSums(diad_nodes < dist_number) > 0, ] #the number of diads
+    
+    number_of_h2_to_bips_in_h2_diads<- nrow(n_diads_on_bips)
+    
+    n_h2_to_bips_in_h2_diads_df<- rbind(n_h2_to_bips_in_h2_diads_df, number_of_h2_to_bips_in_h2_diads)
+    
+    diad_nodes<- as.list(diad_nodes)
+    n_diads_on_bips<- lapply(diad_nodes, function(x) length(x[x<dist_number]))
+    
+    number_of_h2_to_bips_per_cell_connector<- as.data.frame(do.call(rbind, n_diads_on_bips)) #turn into df
+    
+    rownames(number_of_h2_to_bips_per_cell_connector) <- gsub("X", "", rownames(number_of_h2_to_bips_per_cell_connector)) #cleaning the X that is in the rownames
+    
+    number_of_h2_to_bips_per_cell_connector$third_element<- rownames(number_of_h2_to_bips_per_cell_connector) #turning rownames into column
+    
+    number_of_h2_to_bips_per_cell_connector$third_element<- by(number_of_h2_to_bips_per_cell_connector, seq_len(nrow(number_of_h2_to_bips_per_cell_connector)), 
+                                                                function(row) filter(connectors_to_h2, post_node_id %in% row$third_element)$pre_skid) #these are the names of the cells whose nodes participate in triads with h2 and bips
+    number_of_h2_to_bips_per_cell_connector$third_element<- as.character(number_of_h2_to_bips_per_cell_connector$third_element)
+    
+    number_of_h2_to_bips_per_cell_connector<-separate_rows(number_of_h2_to_bips_per_cell_connector,third_element,convert = T)
+    number_of_h2_to_bips_per_cell_connector<-subset(number_of_h2_to_bips_per_cell_connector, nchar(as.character(third_element)) > 3)
+    number_of_h2_to_bips_per_cell_connector$third_element_name<- catmaid_get_neuronnames(number_of_h2_to_bips_per_cell_connector$third_element) #gets names of the third element in the triad
+    number_of_h2_to_bips_per_cell_connector$Cell<- "Third element of triad"
+    number_of_h2_to_bips_per_cell_connector$h2<- as.character(h2_ids)
+    
+    test_regex<- str_split(number_of_h2_to_bips_per_cell_connector$third_element_name, boundary("word"), simplify = T)
+    number_of_h2_to_bips_per_cell_connector$family_name<- as.data.frame(str_split(number_of_h2_to_bips_per_cell_connector$third_element_name, boundary("word"), simplify = T))$V2 #getting the family of cells
+    number_of_h2_to_bips_per_cell_connector$family_name[number_of_h2_to_bips_per_cell_connector$family_name %!in% c("H2rn", "uLPTCrn","bIPS","cLPTCrn", "H2","HSE","HSN","HSS")] <- "Other" #assess manually this
+    
+    h2_bips_h2_diads<-rbind(h2_bips_h2_diads, number_of_h2_to_bips_per_cell_connector)
+    
+    p2 <- ggplot(number_of_h2_to_bips_per_cell_connector, aes(x = Cell, y = V1)) +
+      geom_bar(
+        aes(color = family_name, fill = family_name),
+        stat = "identity", position = position_stack()
+      ) +
+      ylab("Number of h2 Diads")+
+      xlab("T=1865.55 nm")
+    print(p2)
+    ggsave(filename = file.path(output_dir, "Number of h2 Diads.png"), plot = p2, width = 6, height = 4)
+    number_of_h2_to_bips_per_cell_connector %>% group_by(family_name) %>% count(wt= V1) #summary of data
+    
+  }
+```
+
+## Triads
+```{r}
+# Function to check for a valid neuron
+check_neuron_validity <- function(neuron_id) {
+  # Try to read the neuron; if there's an error, return FALSE
+  neuron <- tryCatch(read.neuron.catmaid(neuron_id),
+                     error = function(e) NULL)
+  if (is.null(neuron)) return(FALSE)
+  
+  # Check that the neuron object contains the 'd' data frame
+  if (!"d" %in% names(neuron)) return(FALSE)
+  
+  # Ensure the neuron has at least one segment with 2 points (i.e. more than one row in the 'd' data frame)
+  if (nrow(neuron$d) < 2) return(FALSE)
+  
+  return(TRUE)
+}
+
+
+
+####--- triads with h2 and bips----####
+bips_fafbseg <- read.neuron.catmaid(3029743)
+threshold_for_distances <- 20
+dist_number_old <- (1825 + 1143) / 2
+
+n_triads <- c()
+bips_points_fafbseg <- xyzmatrix(bips_fafbseg[["d"]]) # gets the xyz matrix for all the bips points
+syn_from_bips <- filter(catmaid_get_connector_table(c(9730353,3029743)), direction == "incoming") # gets all incoming synapses onto bips
+syn_from_bips <- filter(syn_from_bips, skid == "3029743") # gets all incoming synapses onto bips
+# h2_id
+h2_to_bips <- filter(syn_from_bips, partner_skid == "5232902", confidence > 3)
+# h2_to_bips<- filter(syn_from_bips, partner_skid=='830793'|
+#                       partner_skid=='827034'|
+#                       partner_skid=='4058824', confidence >3)
+h2rn_to_bips <- filter(syn_from_bips, partner_skid == '8178073' |
+                           partner_skid == '8438889' |
+                           partner_skid == '9730353' |
+                           partner_skid == '11930921' |
+                           partner_skid == '11956980' |
+                           partner_skid == '12036568', confidence > 3)
+
+h2_ids <- c(5232902)  # This is the H2 id
+triads_list <- data.frame()
+n_h2_to_bips <- data.frame()
+n_h2_to_bips_in_triads_df <- data.frame()
+n_h2_to_bips_df <- data.frame()
+for (h2_id in h2_ids) {
+  
+  h2_to_bips <- filter(syn_from_bips, partner_skid == h2_ids, confidence > 3)
+  
+  connectors_to_bips <- catmaid_get_connectors_between(post_skids = c(3029743)) # gets list of all connectors with bips as postsyn
+  connectors_to_h2 <- catmaid_get_connectors_between(post_skids = h2_ids)       # gets list of all connectors with h2 as postsyn
+  
+  cells_that_synapse_to_both_h2_and_bips <- as.list(intersect(connectors_to_bips$pre_skid, connectors_to_h2$pre_skid)) # find cells that synapse both onto bips and h2
+  
+  # NEW CHANGE: Remove invalid neurons from the list by checking for valid segment data.
+  valid_cells <- cells_that_synapse_to_both_h2_and_bips[sapply(cells_that_synapse_to_both_h2_and_bips, check_neuron_validity)]
+  invalid_cells <- setdiff(cells_that_synapse_to_both_h2_and_bips, valid_cells)
+  cat("Removing invalid neurons. The following neuron IDs are invalid and will be skipped:\n")
+  print(invalid_cells)
+  cells_that_synapse_to_both_h2_and_bips <- valid_cells
+  
+  conn_to_h2_of_cells_that_synapse_to_both_h2_and_bips <- lapply(cells_that_synapse_to_both_h2_and_bips, 
+                                                                 function(x) catmaid_get_connectors_between(pre_skids = x, post_skids = h2_ids)) # list of connectors between each of the (cells that synapse onto h2 and bips) and h2
+  conn_to_bips_of_cells_that_synapse_to_both_h2_and_bips <- lapply(cells_that_synapse_to_both_h2_and_bips, 
+                                                                  function(x) catmaid_get_connectors_between(pre_skids = x, post_skids = 3029743)) # list of connectors between each of the (cells that synapse onto h2 and bips) and bips
+  
+  n_graph2_of_cells_that_synapse_to_both_h2_and_bips <- lapply(cells_that_synapse_to_both_h2_and_bips, 
+                                                               function(x) as.ngraph(read.neuron.catmaid(x))) # turns every cell _that_synapse_to_both_h2_and_bips into an n graph
+  neuron_cells_that_synapse_to_both_h2_and_bips <- lapply(cells_that_synapse_to_both_h2_and_bips, 
+                                                          function(x) read.neuron.catmaid(x)) # reads every cell _that_synapse_to_both_h2_and_bips 
+  
+  # will now calculate the distance between each connector node to h2 and each connector node to bips for every cell that syns both into h2 and bips
+  distances_between_nodes_of_each_cell_that_synapse_to_both_h2_and_bips <- mapply(function(x, y, z) as.data.frame(distance_between(x, 
+                                                                                                                                    from = as.character(unique(y$pre_node_id)), 
+                                                                                                                                    to = as.character(unique(z$pre_node_id)),
+                                                                                                                                    identifier.type = "pointno",
+                                                                                                                                    mode = "all")),
+                                                                                    neuron_cells_that_synapse_to_both_h2_and_bips, conn_to_h2_of_cells_that_synapse_to_both_h2_and_bips, conn_to_bips_of_cells_that_synapse_to_both_h2_and_bips)
+  # getting node id in the body of each cell for the synapses onto bips that are in proximity (dist of 5) to a synapse onto h2
+  conn_nodes_close_to_each_other_from_cell <- lapply(distances_between_nodes_of_each_cell_that_synapse_to_both_h2_and_bips, function(x) colnames(x[colSums(x < dist_number) > 0])) # these are the names of the nodes synapsing onto h2 and bips that are close to each other on the body of each cell
+  
+  # getting bips nodes associated with the nodes from the previous line
+  pres_of_syn_to_bips_to_add_to_comparison <- mapply(function(x, y) filter(y, pre_node_id %in% x)$post_node_id,
+                                                     conn_nodes_close_to_each_other_from_cell,
+                                                     conn_to_bips_of_cells_that_synapse_to_both_h2_and_bips)
+  
+  post_node_ids_to_add <- unlist(pres_of_syn_to_bips_to_add_to_comparison) # turn post ids into vector
+  
+  connectors_to_both_bips_and_h2 <- intersect(connectors_to_bips$connector_id, connectors_to_h2$connector_id) # find connector nodes which are linked to both h2 and bips
+  connectors_to_both_bips_and_h2 <- filter(connectors_to_bips, connector_id %in% connectors_to_both_bips_and_h2) # extract info for those connectors
+  
+  bips_graph_fafbseg <- as.ngraph(bips_fafbseg) # getting the graph structure of the bips neuron
+  
+  nodes_on_bips_h2_to_bips <- h2_to_bips$treenode_id
+  nodes_on_bips_cell_to_bips <- c(connectors_to_both_bips_and_h2$post_node_id, post_node_ids_to_add)
+  
+  n_h2_to_bips_df <- rbind(n_h2_to_bips_df, length(unique(nodes_on_bips_h2_to_bips)))
+  
+  distances <- as.data.frame(distance_between(bips_fafbseg, from = as.character(unique(nodes_on_bips_h2_to_bips)),
+                                               to = as.character(unique(nodes_on_bips_cell_to_bips)), identifier.type = "pointno",
+                                               mode = "all"))
+  
+  
+  nodes_which_participate_in_triads <- colnames(distances[colSums(distances < dist_number) > 0]) # these are the names of the nodes that participate in triads
+  
+  
+  distances_only_triads <- distances[colSums(distances < dist_number) > 0] # filter the distances df only for the (columns) that make triads
+  
+  actual_number_of_number_of_h2_to_bips_in_triads <- distances_only_triads[rowSums(distances_only_triads < dist_number) > 0, ] # the h2->bips connections that are part of triads
+  
+  n_h2_to_bips_in_triads <- nrow(actual_number_of_number_of_h2_to_bips_in_triads) # how many h2->bips connections are part of triads
+  n_h2_to_bips_in_triads_df <- rbind(n_h2_to_bips_in_triads_df, n_h2_to_bips_in_triads)
+  
+  distances_only_triads <- as.list((distances_only_triads)) # turn columns of df into list
+  
+  
+  number_of_h2_to_bips_per_cell_connector <- lapply(distances_only_triads, function(x) length(x[x < dist_number])) # find how many h2 to bips syn are present per each (cell->h2 and cell->bips) node
+  
+  
+  number_of_h2_to_bips_per_cell_connector <- as.data.frame(do.call(rbind, number_of_h2_to_bips_per_cell_connector)) # turn into df
+  
+  rownames(number_of_h2_to_bips_per_cell_connector) <- gsub("X", "", rownames(number_of_h2_to_bips_per_cell_connector)) # cleaning the X that is in the rownames
+  
+  number_of_h2_to_bips_per_cell_connector$third_element <- rownames(number_of_h2_to_bips_per_cell_connector) # turning rownames into column
+  
+  number_of_h2_to_bips_per_cell_connector$third_element <- by(number_of_h2_to_bips_per_cell_connector, seq_len(nrow(number_of_h2_to_bips_per_cell_connector)), 
+                                                              function(row) filter(connectors_to_bips, post_node_id %in% row$third_element)$pre_skid) # these are the names of the cells whose nodes participate in triads with h2 and bips
+  number_of_h2_to_bips_per_cell_connector$third_element <- as.character(number_of_h2_to_bips_per_cell_connector$third_element)
+  
+  number_of_h2_to_bips_per_cell_connector <- separate_rows(number_of_h2_to_bips_per_cell_connector, third_element, convert = T)
+  number_of_h2_to_bips_per_cell_connector <- subset(number_of_h2_to_bips_per_cell_connector, nchar(as.character(third_element)) > 3)
+  number_of_h2_to_bips_per_cell_connector$third_element_name <- catmaid_get_neuronnames(number_of_h2_to_bips_per_cell_connector$third_element) # gets names of the third element in the triad
+  number_of_h2_to_bips_per_cell_connector$Cell <- "Third element of triad"
+  number_of_h2_to_bips_per_cell_connector$h2 <- as.character(h2_id)
+  number_of_h2_to_bips_per_cell_connector <- subset(number_of_h2_to_bips_per_cell_connector, (third_element) %in% cells_that_synapse_to_both_h2_and_bips) # keep only the real third elements
+  
+  
+  number_of_h2_to_bips_per_cell_connector %>% group_by(third_element_name) %>% count(wt = V1) # summary of data
+  sum(number_of_h2_to_bips_per_cell_connector$V1)
+  
+  
+  distances_only_triads <- distances[colSums(distances < dist_number) > 0] # filter the distances df only for the (columns) that make triads
+  n_h2_to_bips_out_of_164_involved_in_triads <- distances_only_triads[apply(distances_only_triads < dist_number, 1, any, na.rm = TRUE),]
+  triads_list <- rbind(triads_list, number_of_h2_to_bips_per_cell_connector)
+  n_h2_to_bips <- rbind(n_h2_to_bips, nrow(n_h2_to_bips_out_of_164_involved_in_triads))
+}
+
+n_h2_to_bips_in_triads_df <- rbind(as.data.frame(n_h2_to_bips_in_triads_df), 1) # because there is a single triad, and the loop above is not prepared for that, so i need to add the 1 manually
+sum(n_h2_to_bips_in_triads_df) # for reference, this is the number to be placed in the n_h2_to_bips_diads dataframe below
+sum(n_h2_to_bips_df) # for reference
+## Visualization 
+test_regex <- str_split(triads_list$third_element_name, boundary("word"), simplify = T)
+triads_list$family_name <- as.data.frame(str_split(triads_list$third_element_name, boundary("word"), simplify = T))$V2 # getting the family of cells
+triads_list$family_name[triads_list$family_name == "input"] <- "Other" # assess manually this
+triads_list$family_name[triads_list$family_name == "Right"] <- "H2rn" # assess manually this
+triads_list$family_name[triads_list$family_name == "11917882"] <- "Other" # assess manually this
+triads_list$family_name[triads_list$family_name == "7690274"] <- "Other" # assess manually this
+triads_list$family_name[triads_list$family_name %!in% c("H2rn", "uLPTCrn", "bIPS", "cLPTCrn", "H2", "HSE", "HSN", "HSS")] <- "Other"
+
+h2_bips_dnap15_diads$Architecture <- "bips diad"
+h2_bips_h2_diads$Architecture <- "h2 diad"
+triads_list$Architecture <- "Triad"
+
+all_together_for_has_bips <- rbind(h2_bips_dnap15_diads, h2_bips_h2_diads, triads_list)
+all_together_for_has_bips$Threshold <- dist_number
+all_together_for_h2_bips_multiple_thresholds <- rbind(all_together_for_h2_bips_multiple_thresholds, all_together_for_has_bips)
+
+#####--- Number of h2->bips in the diads ---####
+n_h2_to_bips_diads <- as.data.frame(c(sum(n_h2_to_bips_in_h2_diads_df[, 1]), sum(n_h2_to_bips_in_bips_diads_df[, 1]), sum(n_h2_to_bips_in_triads_df))) # the 84 is from triad_script, and it is the number of rows in n_h2_to_bips_out_of_164
+n_h2_to_bips_diads$Number_h2_to_bips <- n_h2_to_bips_diads[, 1]
+n_h2_to_bips_diads$Type_architecture <- c("h2 diad", "bips diad", "Trio")
+n_h2_to_bips_diads$Threshold <- dist_number
+
+n_h2_to_bips_diads_multiple_thresholds <- rbind(n_h2_to_bips_diads_multiple_thresholds, n_h2_to_bips_diads)
+
+p3 <- ggplot(n_h2_to_bips_diads, aes(x = Type_architecture, y = Number_h2_to_bips)) +
+  geom_bar(
+    aes(),
+    stat = "identity", position = position_stack()
+  ) +
+  ylab("Number of h2->bips (out of 348)") +
+  xlab("T=1865.55 nm")
+print(p3)
+ggsave(filename = file.path(output_dir, "Number_of_h2_to_bips.png"), plot = p3, width = 6, height = 4)
+
+
+all_together_for_has_bips_1865 <- filter(all_together_for_h2_bips_multiple_thresholds, all_together_for_h2_bips_multiple_thresholds$Threshold == 1865.554)
+p4 <- ggplot(all_together_for_has_bips_1865, aes(x = Architecture, y = V1)) +
+  geom_bar(
+    aes(color = family_name, fill = family_name),
+    stat = "identity", position = "fill"
+  ) +
+  ylab("Proportion on Diads/Triads") +
+  xlab("T=1865.55 nm")
+print(p4)
+ggsave(filename = file.path(output_dir, "Proportion of Diads_Triads.png"), plot = p4, width = 6, height = 4)
+
+```
+
+
+
+
+
+## Triad Validation
+```{r}
+# Function to check if a candidate triad is real
+check_triads_real <- function(third_element, h2_id, bips_id, distance_threshold = 1865.55) {
+  # Retrieve connector information: does this neuron connect to both h2 and bips?
+  conn_to_h2 <- catmaid_get_connectors_between(pre_skids = third_element, post_skids = h2_id)
+  conn_to_bips <- catmaid_get_connectors_between(pre_skids = third_element, post_skids = bips_id)
+  
+  # If either connection is missing, then the triad is not real
+  if (nrow(conn_to_h2) == 0 || nrow(conn_to_bips) == 0) {
+    return(FALSE)
+  }
+  
+  # Try to read the candidate neuron
+  candidate_neuron <- tryCatch(read.neuron.catmaid(third_element),
+                               error = function(e) NULL)
+  if (is.null(candidate_neuron)) return(FALSE)
+  
+  # Extract unique pre-node IDs for connectors onto h2 and bips
+  pre_nodes_h2 <- unique(conn_to_h2$pre_node_id)
+  pre_nodes_bips <- unique(conn_to_bips$pre_node_id)
+  
+  # Calculate distances on the candidate neuron between the nodes connecting to h2 and bips
+  candidate_distances <- as.data.frame(distance_between(candidate_neuron,
+                                                        from = as.character(pre_nodes_h2),
+                                                        to = as.character(pre_nodes_bips),
+                                                        identifier.type = "pointno",
+                                                        mode = "all"))
+  # If any computed distance is below the threshold, then mark this triad as real
+  if (any(candidate_distances < distance_threshold, na.rm = TRUE)) {
+    return(TRUE)
+  } else {
+    return(FALSE)
+  }
+}
+
+triads_list$real_triads <- mapply(check_triads_real, 
+                                  third_element = triads_list$third_element,
+                                  h2_id = triads_list$h2,
+                                  MoreArgs = list(bips_id = "3029743", distance_threshold = 1865.55))
+
+# Filter or examine only the triads that are confirmed as real:
+real_triads <- subset(triads_list, real_triads == TRUE)
+cat("Number of real triads detected:", nrow(real_triads), "\n")
+
+# Display the real triads
+print(real_triads)
+
+```
+
+## Deduplicate triad list
+```{r}
+# Check the number of rows before deduplication
+cat("Original number of triads:", nrow(triads_list), "\n")
+
+# Remove duplicate rows (exact duplicates)
+unique_triads_list <- unique(triads_list)
+
+# Check the number of rows after deduplication
+cat("Number of unique triads:", nrow(unique_triads_list), "\n")
+
+# Optionally, replace your triads_list with the unique version:
+triads_list <- unique_triads_list
+```
+
+
+

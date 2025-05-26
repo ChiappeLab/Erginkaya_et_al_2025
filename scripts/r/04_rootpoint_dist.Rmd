@@ -1,0 +1,436 @@
+---
+title: "Rootpoint Distribution"
+author: "Filipa Torrão & Eugenia Chiappe"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+## Load Libraries
+```{r}
+library(tibble)
+library(fafbseg)
+#if (!require("devtools")) install.packages("devtools")
+#devtools::install_github("jefferislab/catnat")
+library(catnat)
+library(ggpubr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+# Create the output directory (two levels above) for plots and CSV files
+output_dir <- file.path("..", "..", "results","r_results","04_rootpoint_analysis")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+## Connect to Catmaid and Read bIPS Neuron
+```{r}
+conn = catmaid_login(server="https://fafb.catmaid.virtualflybrain.org/")
+bips_fafbseg<- read.neuron.catmaid(3029743)
+bips_points_fafbseg<- xyzmatrix(bips_fafbseg[["d"]]) #gets the xyz matrix for all the bips points
+syn_from_bips<- filter(catmaid_get_connector_table(c(9730353,3029743)), direction=="incoming") #gets all incoming synapses onto bips
+h2rn_syn_catmaid<-filter(syn_from_bips, partner_skid=='8178073'|
+                           partner_skid=='8438889'|
+                           partner_skid=='9730353'|
+                           partner_skid=='11930921'|
+                           partner_skid=='11956980'|
+                           partner_skid=='12036568', confidence >3) %>% select(matches("[xyz]")) %>% xyzmatrix()
+kd_catmaid_h2rn_fafbseg<-nabor::knn(query = h2rn_syn_catmaid, data=bips_points_fafbseg, k=1)
+```
+
+## Load H2RN Neurons and Combine Their Points
+```{r}
+#find the closest h2rn node to each h2rn-> bips and h2rn-> h2 synapse
+
+h2rn_1_fafbseg<- read.neuron.catmaid(8178073)
+h2rn_1_points_fafbseg<- xyzmatrix(h2rn_1_fafbseg[["d"]])
+h2rn_2_fafbseg<- read.neuron.catmaid(8438889)
+h2rn_2_points_fafbseg<- xyzmatrix(h2rn_2_fafbseg[["d"]])
+h2rn_3_fafbseg<- read.neuron.catmaid(9730353)
+h2rn_3_points_fafbseg<- xyzmatrix(h2rn_3_fafbseg[["d"]])
+h2rn_4_fafbseg<- read.neuron.catmaid(11930921)
+h2rn_4_points_fafbseg<- xyzmatrix(h2rn_4_fafbseg[["d"]])
+h2rn_5_fafbseg<- read.neuron.catmaid(11956980)
+h2rn_5_points_fafbseg<- xyzmatrix(h2rn_5_fafbseg[["d"]])
+h2rn_6_fafbseg<- read.neuron.catmaid(12036568)
+h2rn_6_points_fafbseg<- xyzmatrix(h2rn_6_fafbseg[["d"]])
+
+h2rn_points_fafbseg<- rbind(h2rn_1_points_fafbseg,
+                            h2rn_2_points_fafbseg,
+                            h2rn_3_points_fafbseg,
+                            h2rn_4_points_fafbseg,
+                            h2rn_5_points_fafbseg,
+                            h2rn_6_points_fafbseg)
+```
+
+## Get Synapse Data for H2, HS, and bIPS
+```{r}
+syn_to_h2<- filter(catmaid_get_connector_table(5232902), direction=="incoming")
+syn_to_hs_1<-  filter(catmaid_get_connector_table(830793), direction=="incoming")
+syn_to_hs_2<-  filter(catmaid_get_connector_table(827034), direction=="incoming")
+syn_to_hs_3<-  filter(catmaid_get_connector_table(4058824), direction=="incoming")
+syn_to_hs<- rbind(syn_to_hs_1,syn_to_hs_2,syn_to_hs_3)
+syn_to_bips<- syn_from_bips
+syn_to_bips_real<- filter(catmaid_get_connector_table(3029743), direction=="incoming")
+```
+
+## Prepare Synapse Matrices and KNN Searches
+```{r}
+h2rn_syn_to_bips<- h2rn_syn_catmaid
+
+h2rn_syn_to_h2<- filter(syn_to_h2, partner_skid=='8178073'|
+                          partner_skid=='8438889'|
+                          partner_skid=='9730353'|
+                          partner_skid=='11930921'|
+                          partner_skid=='11956980'|
+                          partner_skid=='12036568', confidence >3) %>% select(matches("[xyz]")) %>% xyzmatrix()
+h2rn_syn_to_hs<- filter(syn_to_hs, partner_skid=='8178073'|
+                          partner_skid=='8438889'|
+                          partner_skid=='9730353'|
+                          partner_skid=='11930921'|
+                          partner_skid=='11956980'|
+                          partner_skid=='12036568', confidence >3) %>% select(matches("[xyz]")) %>% xyzmatrix()
+h2_syn_to_bips<- filter(syn_to_bips_real, partner_skid=="5232902",confidence >3) %>% select(matches("[xyz]")) %>% xyzmatrix()
+
+#from the h2rn nodes closest to each synapse, get the closest 3 nodes (also from the h2rn skeleton)
+kd_h2rn_bips<- nabor::knn(query = h2rn_syn_to_bips, data=h2rn_points_fafbseg, k=5)
+kd_h2rn_h2<- nabor::knn(query = h2rn_syn_to_h2, data=h2rn_points_fafbseg, k=5)
+kd_h2rn_hs<- nabor::knn(query = h2rn_syn_to_hs, data=h2rn_points_fafbseg, k=5)
+kd_h2rn_h2_to_bips<- nabor::knn(query = h2_syn_to_bips, data=h2rn_points_fafbseg, k=5)
+
+h2rn_bips_df<- as.data.frame(kd_h2rn_bips)
+h2rn_bips_df<- rownames_to_column(h2rn_bips_df,'bips_idx')
+h2rn_h2_df<- as.data.frame(kd_h2rn_h2)
+h2rn_h2_df<- rownames_to_column(h2rn_h2_df,'h2_idx')
+```
+
+## Filter KNN Results Based on Distance
+```{r}
+test_df<- as.data.frame(kd_h2rn_h2_to_bips)
+#keep only rows whose max distance (from any columns) is below the max(kd_h2rn_h2$nn.dists)
+test_df<- rownames_to_column(test_df,'bips_idx')
+df_kd_h2rn_h2_to_bips_filtered<- filter(test_df, nn.dists.1 < 2*max(kd_h2rn_h2$nn.dists) & nn.dists.2 < 2*max(kd_h2rn_h2$nn.dists) & 
+                                          nn.dists.3 < 2*max(kd_h2rn_h2$nn.dists) & nn.dists.4 < 2*max(kd_h2rn_h2$nn.dists) &
+                                          nn.dists.5 < 2*max(kd_h2rn_h2$nn.dists) )
+not_close<- setdiff(test_df, df_kd_h2rn_h2_to_bips_filtered)
+```
+
+## Aggregating Synapses (H2 → bIPS)
+```{r}
+#aggregating really close synapses (h2->bips)
+h2_to_bips_expanded<- select(df_kd_h2rn_h2_to_bips_filtered, c(nn.idx.1,nn.idx.2,nn.idx.3,nn.idx.4,nn.idx.5))
+
+h2_to_bips_non_aggregated<- h2_to_bips_expanded
+bips_non_aggregated<- as.data.frame(kd_h2rn_bips$nn.idx)
+h2_non_aggregated<- as.data.frame(kd_h2rn_h2$nn.idx)
+
+a<- as.data.frame(bips_non_aggregated)
+b<- as.data.frame(h2_to_bips_non_aggregated)
+
+x <- as.data.frame(expand.grid(seq(nrow(a)), seq(nrow(b))))
+
+intersect_count<- c()
+intersection_nodes<-data.frame()
+non_intersection_nodes<- data.frame()
+
+for (i in 1:nrow(x)){
+  row<- as.numeric(x[i,])
+  if (any(a[row[1],] %in% b[row[2],])){
+    intersect_count[length(intersect_count)+1]<-1
+    intersection_nodes<- rbind(intersection_nodes, c(a[row[1],],b[row[2],]))
+  }
+  else {
+    intersect_count[length(intersect_count)+1]<-0
+    non_intersection_nodes<- rbind(non_intersection_nodes, c(a[row[1],],b[row[2],]))
+  }
+}
+
+number_close_syns_h2_bips<-sum(intersect_count)
+
+split_by_h2<- split(intersect_count, ceiling(seq_along(intersect_count)/length(bips_non_aggregated$V1)))
+split_by_h2_count<- as.data.frame(do.call(rbind,(lapply(split_by_h2, sum) )))
+number_of_h2_syn_outside_bips_syn<- colSums(split_by_h2_count!=0)
+```
+
+## Intersection and Triangulation of Synapse Data
+```{r}
+number_h2rn_to_bips_in_bips_intersection<- distinct(select(intersection_nodes, c(V1,V2,V3,V4,V5)))
+number_h2_to_bips_in_bips_intersection<- distinct(select(intersection_nodes, c(nn.idx.1,nn.idx.2,nn.idx.3,nn.idx.4,nn.idx.5)))
+
+# Triangulation script
+split_by_h2_close_to_bips<- as.data.frame(do.call(rbind,split_by_h2))
+split_by_h2_close_to_bips<- split_by_h2_close_to_bips[rowSums(split_by_h2_close_to_bips[])>0,]
+
+# finally intersecting all of them
+a<- as.data.frame(h2_non_aggregated)
+b<- as.data.frame(intersection_nodes)
+x4 <- as.data.frame(expand.grid(seq(nrow(a)), seq(nrow(b))))
+intersect_count_2<- c()
+intersection_nodes_2<- data.frame()
+non_intersection_nodes_2<- data.frame()
+for (i in 1:nrow(x4)){
+  row<- as.numeric(x4[i,])
+  if (any(a[row[1],] %in% b[row[2],])){
+    intersect_count_2[length(intersect_count_2)+1]<-1
+    intersection_nodes_2<- rbind(intersection_nodes_2, cbind(a[row[1],],b[row[2],]))
+  }
+  else {
+    intersect_count_2[length(intersect_count_2)+1]<-0
+    non_intersection_nodes_2<- rbind(non_intersection_nodes_2, c(a[row[1],],b[row[2],]))
+  }
+}
+
+number_close_syns_h2_bips_with_h2rn_nearby<-sum(intersect_count_2)
+split_by_syn_sphere<- split(intersect_count_2, ceiling(seq_along(intersect_count_2)/length(h2_non_aggregated$V1)))
+split_by_syn_sphere_count<- as.data.frame(do.call(rbind,(lapply(split_by_syn_sphere, sum) )))
+number_of_syn<- colSums(split_by_syn_sphere_count!=0)
+```
+
+## Separate Intersecting vs Non-Intersecting Synapses
+```{r}
+number_h2rn_to_bips_in_total_intersection<- distinct(intersection_nodes_2[,6:10])
+number_h2_to_bips_in_total_intersection<- distinct(intersection_nodes_2[,11:15])
+number_h2rn_to_h2_in_total_intersection<- distinct(intersection_nodes_2[,1:5])
+
+non_intersecting_h2rn_bips<- distinct(as.data.frame(cbind(non_intersection_nodes_2$V1,non_intersection_nodes_2$V2,non_intersection_nodes_2$V3,
+                                                          non_intersection_nodes_2$V4,non_intersection_nodes_2$V5)))
+
+intersection_nodes_2_h2rn_bips<-distinct(as.data.frame(cbind(intersection_nodes_2$V1,intersection_nodes_2$V2,intersection_nodes_2$V3,
+                                                           intersection_nodes_2$V4,intersection_nodes_2$V5)))
+real_non_intersecting_h2rn_bips<- setdiff(non_intersecting_h2rn_bips, intersection_nodes_2_h2rn_bips)
+
+real_non_intersecting_h2rn_bips_single_id<- real_non_intersecting_h2rn_bips$V1
+
+real_intersecting_h2rn_bips<- setdiff(intersection_nodes_2_h2rn_bips,real_non_intersecting_h2rn_bips) 
+
+real_intersecting_h2rn_bips_single_id<- real_intersecting_h2rn_bips$V1
+
+real_non_intersecting_h2rn_bips_single_id<- setdiff(real_non_intersecting_h2rn_bips_single_id,real_intersecting_h2rn_bips_single_id)
+real_intersecting_h2rn_bips_single_id<- setdiff(real_intersecting_h2rn_bips_single_id,real_non_intersecting_h2rn_bips_single_id)
+```
+
+## Map Synapse Coordinates to bIPS and H2RN Skeleton
+```{r}
+kd_h2rn_bips_on_bips<- nabor::knn(query = h2rn_syn_to_bips, data=bips_points_fafbseg, k=1)
+kd_h2rn_bips_one<- nabor::knn(query = h2rn_syn_to_bips, data=h2rn_points_fafbseg, k=1)
+
+coordinates_on_bips_of_h2rn_syn_to_bips<- as.data.frame(bips_points_fafbseg[kd_h2rn_bips_on_bips$nn.idx ,])
+coordinates_on_bips_of_h2rn_syn_to_bips$Idx<- kd_h2rn_bips_on_bips$nn.idx
+coordinates_on_bips_of_h2rn_syn_to_bips<- rownames_to_column(coordinates_on_bips_of_h2rn_syn_to_bips, var = "Idx_syn")
+coordinates_on_h2rn_of_h2rn_syn_to_bips<- as.data.frame(h2rn_points_fafbseg[kd_h2rn_bips_one$nn.idx ,])
+coordinates_on_h2rn_of_h2rn_syn_to_bips$Idx<- kd_h2rn_bips_one$nn.idx
+coordinates_on_h2rn_of_h2rn_syn_to_bips<- rownames_to_column(coordinates_on_h2rn_of_h2rn_syn_to_bips, var = "Idx_syn")
+coordinates_on_h2rn_of_h2rn_syn_to_bips_non_intersection<- distinct(filter(coordinates_on_h2rn_of_h2rn_syn_to_bips, Idx %in% 
+                                                                             real_non_intersecting_h2rn_bips_single_id))
+h2rn_to_bips_syn_ids_non_intersecting<- coordinates_on_h2rn_of_h2rn_syn_to_bips_non_intersection$Idx_syn
+coordinates_on_bips_of_h2rn_syn_to_bips_non_intersection<- filter(coordinates_on_bips_of_h2rn_syn_to_bips, Idx_syn %in%  h2rn_to_bips_syn_ids_non_intersecting)
+
+coordinates_on_h2rn_of_h2rn_syn_to_bips_intersection<- distinct(filter(coordinates_on_h2rn_of_h2rn_syn_to_bips, Idx %in% 
+                                                                         real_intersecting_h2rn_bips_single_id))
+h2rn_to_bips_syn_ids_intersecting<- coordinates_on_h2rn_of_h2rn_syn_to_bips_intersection$Idx_syn
+coordinates_on_bips_of_h2rn_syn_to_bips_intersection<- filter(coordinates_on_bips_of_h2rn_syn_to_bips, Idx_syn %in%  h2rn_to_bips_syn_ids_intersecting)
+```
+
+## Geodesic Distance Calculation and Mesh Graph Construction
+```{r}
+# geodesic distance calculation 
+mesh2graph <- function(x, ...) {
+  if(inherits(x, 'shapelist3d')) x=x[[1]]
+  if(inherits(x, 'neuronlist')) x=x[[1]]
+  if(!inherits(x, 'mesh3d')) x=as.mesh3d(x, ...)
+  if(nrow(x$it)!=3) stop("I only work for triangular meshes right now")
+  
+  # make the edge list
+  v1=x$it[1,]
+  v2=x$it[2,]
+  v3=x$it[3,]
+  el=rbind(cbind(v1,v2), cbind(v1,v3), cbind(v2,v3))
+  g=igraph::graph_from_edgelist(el, directed = FALSE)
+  
+  # calculate lengths of each edge
+  xyz=xyzmatrix(x)
+  edgelengths = function(v1, v2) {
+    deltas=xyz[v1,,drop=F]-xyz[v2,,drop=F]
+    sqrt(rowSums(deltas^2))
+  }
+  weights=c(edgelengths(v1,v2), edgelengths(v1,v3), edgelengths(v2,v3))
+  igraph::E(g)$weight=weights
+  g
+}
+
+bIPS.skid <- flywire_latestid('720575940622581173') #bips id
+#flywire_latestid('720575940616243077', sample=FALSE)
+#with_segmentation('sandbox', flywire_latestid('720575940625602908'))
+# Load the segmented neuron
+bIPS.mesh <- read_cloudvolume_meshes(bIPS.skid)
+bips_mesh_graph<-mesh2graph(bIPS.mesh)
+
+bIPS.AllInputs=flywire_partners(bIPS.skid, partners = 'inputs', details = TRUE, method='spine')
+
+library(dplyr)
+h2id=flywire_ids(flywire_latestid("720575940632427603"), integer64 = T)
+
+h2rnids = flywire_ids(flywire_latestid(
+  c(
+    "720575940642076576",
+    "720575940617566769",
+    "720575940624756836",
+    "720575940622082451",
+    "720575940619291083",
+    "720575940621865991"
+    
+  )
+), integer64 = T)
+hsids <- flywire_ids(flywire_latestid(c(
+  "720575940635441771",
+  "720575940631989571",
+  "720575940626456894"
+)), integer64 = T)
+
+ulptcids <- flywire_ids(flywire_latestid(c(
+  "720575940628599516",
+  "720575940631296543",
+  "720575940631333955",
+  "720575940612144047", 
+  "720575940606873522",
+  "720575940647708537",
+  "720575940626988053")), integer64 = T)
+```
+
+## 12. Process bIPS Inputs and Synapse Coordinates
+```{r}
+bIPS.selinputs <- bIPS.AllInputs %>%
+  filter(cleft_scores>=50) %>%
+  filter(pre_x<=(4*145680))%>% 
+  # remove low probability synapses
+  mutate(partner=case_when(
+    pre_id==h2id ~ "H2",
+    pre_id %in% h2rnids ~ "H2RN",
+    pre_id %in% hsids ~ "HS",
+    pre_id %in% ulptcids ~ "uLPTCrn",
+    T ~ 'other'
+  ))# %>%
+#filter(partner!='other') #%
+
+bIPS.selinputs %>%
+  count(partner)
+
+bips_mesh_graph<-mesh2graph(bIPS.mesh)
+
+spike_generation_zone<- xyzmatrix(4*111653, 4*72308, 40*4974) #root point
+
+coord_bips<- cbind(coordinates_on_bips_of_h2rn_syn_to_bips_non_intersection$X,coordinates_on_bips_of_h2rn_syn_to_bips_non_intersection$Y,
+                   coordinates_on_bips_of_h2rn_syn_to_bips_non_intersection$Z)
+coord_bips_inter<- cbind(coordinates_on_bips_of_h2rn_syn_to_bips_intersection$X,coordinates_on_bips_of_h2rn_syn_to_bips_intersection$Y,
+                         coordinates_on_bips_of_h2rn_syn_to_bips_intersection$Z)
+
+
+coord_bips_flywire<- fafb2flywire(coord_bips)
+coord_bips_inter_flywire<- fafb2flywire(coord_bips_inter)
+
+#these are the x y z coordinates for the synapses from neuron A/B onto the neuron of interest
+x_y_z_matrix_h2<- filter(bIPS.selinputs, partner=='H2') %>% select(matches("post_[xyz]")) %>% xyzmatrix()
+x_y_z_matrix_h2rn<- filter(bIPS.selinputs, partner=='H2RN') %>% select(matches("post_[xyz]")) %>% xyzmatrix()
+x_y_z_matrix_hs<- filter(bIPS.selinputs, partner=='HS') %>% select(matches("post_[xyz]")) %>% xyzmatrix()
+x_y_z_matrix_ulptcrn<- filter(bIPS.selinputs, partner=='uLPTCrn') %>% select(matches("post_[xyz]")) %>% xyzmatrix()
+x_y_z_matrix_other<- filter(bIPS.selinputs, partner=="other"
+) %>% select(matches("post_[xyz]")) %>% xyzmatrix()
+x_y_z_matrix_h2rn_non_intersection<- coord_bips_flywire
+x_y_z_matrix_h2rn_intersection<- coord_bips_inter_flywire
+```
+
+## Sample and Compute KNN for Synapse Distances
+```{r}
+n_h2rn_inputs_onto_bips<- nrow(x_y_z_matrix_h2rn)
+set.seed(42)
+x_y_z_matrix_other_229<- x_y_z_matrix_other[sample(nrow(x_y_z_matrix_other), n_h2rn_inputs_onto_bips, ), ]
+
+kd_from_h2<- nabor::knn(query = x_y_z_matrix_h2, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_h2rn<- nabor::knn(query = x_y_z_matrix_h2rn, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_hs<- nabor::knn(query = x_y_z_matrix_hs, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_ulptcrn<- nabor::knn(query = x_y_z_matrix_ulptcrn, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_h2rn_non_intersection<- nabor::knn(query = x_y_z_matrix_h2rn_non_intersection, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_h2rn_intersection<- nabor::knn(query = x_y_z_matrix_h2rn_intersection, data=xyzmatrix(bIPS.mesh), k=1)
+kd_spike_generation_zone<- nabor::knn(query = spike_generation_zone, data=xyzmatrix(bIPS.mesh), k=1)
+kd_from_other_random<- nabor::knn(query = x_y_z_matrix_other_229, data=xyzmatrix(bIPS.mesh), k=1)
+```
+
+## Calculate Geodesic Distances
+```{r}
+unique_ids_h2<- unique(kd_from_h2$nn.idx)
+unique_ids_h2rn<-unique(kd_from_h2rn$nn.idx)
+unique_ids_hs<-unique(kd_from_hs$nn.idx)
+unique_ids_ulptcrn<-unique(kd_from_ulptcrn$nn.idx)
+unique_ids_h2rn_non_intersection<- unique(kd_from_h2rn_non_intersection$nn.idx)
+unique_ids_h2rn_intersection<- unique(kd_from_h2rn_intersection$nn.idx)
+unique_ids_other_random<- unique(kd_from_other_random$nn.idx)
+h2_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_h2, to = kd_spike_generation_zone$nn.idx, mode = "all")
+hs_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_hs, to = kd_spike_generation_zone$nn.idx, mode = "all")
+h2rn_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_h2rn, to = kd_spike_generation_zone$nn.idx, mode = "all")
+h2rn_non_intersection_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_h2rn_non_intersection, to = kd_spike_generation_zone$nn.idx, mode = "all")
+h2rn_intersection_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_h2rn_intersection, to = kd_spike_generation_zone$nn.idx, mode = "all")
+ulptcrn_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_ulptcrn, to = kd_spike_generation_zone$nn.idx, mode = "all")
+other_random_2_spike<- igraph::distances(bips_mesh_graph, v=unique_ids_other_random, to = kd_spike_generation_zone$nn.idx, mode = "all")
+```
+## Visualization of Geodesic Distances
+```{r}
+####--- Visualization for geodesic dist---####
+df_h2_2_spike<-as.data.frame(as.matrix( c(apply(h2_2_spike, 1, c)) ))
+df_h2_2_spike$Cell<- "H2"
+
+df_hs_2_spike<-as.data.frame(as.matrix( c(apply(hs_2_spike, 1, c)) ))
+df_hs_2_spike$Cell<- "HS"
+
+df_h2rn_2_spike<-as.data.frame(as.matrix( c(apply(h2rn_2_spike, 1, c)) ))
+df_h2rn_2_spike$Cell<- "H2rn"
+
+df_h2rn_non_2_spike<-as.data.frame(as.matrix( c(apply(h2rn_non_intersection_2_spike, 1, c)) ))
+df_h2rn_non_2_spike$Cell<- "H2rn (far from H2->bIPS)"
+
+df_h2rn_inter_2_spike<-as.data.frame(as.matrix( c(apply(h2rn_intersection_2_spike, 1, c)) ))
+df_h2rn_inter_2_spike$Cell<- "H2rn (part of triad)"
+
+df_ulptcrn_2_spike<-as.data.frame(as.matrix( c(apply(ulptcrn_2_spike, 1, c)) ))
+df_ulptcrn_2_spike$Cell<- "uLPTCrn"
+
+df_other_random_2_spike<-as.data.frame(as.matrix( c(apply(other_random_2_spike, 1, c)) ))
+df_other_random_2_spike$Cell<- "Random"
+
+spike_combined<- rbind(df_h2_2_spike,df_hs_2_spike,df_h2rn_2_spike,df_h2rn_non_2_spike,df_h2rn_inter_2_spike,df_other_random_2_spike,df_ulptcrn_2_spike)
+spike_combined$Distance<-as.numeric(spike_combined$V1)
+p1 <- ggplot( spike_combined, aes(x=Distance, fill= Cell)) +
+  geom_density( color="#e9ecef", alpha=0.6, position = 'identity') +
+  scale_fill_manual(values=c("#69b3a2", "#404080","darkorange2","darkmagenta","burlywood3","thistle","firebrick4"))+#+ xlim(0,5000)
+  ggtitle("Geodesic distance between the root point of bIPS and input from H2/HS/H2rn onto bIPS")
+print(p1)
+ggsave(filename = file.path(output_dir, "Geodesic distance.png"), plot = p1, width = 6, height = 4)
+
+
+p2 <- ggviolin(spike_combined, x = "Cell", y = "Distance", fill = "Cell",
+         palette = c("#69b3a2", "#404080","darkorange2","darkmagenta","burlywood3","thistle","firebrick4"),
+         add = "boxplot", add.params = list(fill = "white"))
+print(p2)
+ggsave(filename = file.path(output_dir, "Violin Plots.png"), plot = p2, width = 12, height = 8)
+
+```
+
+
+## Statistical Analysis
+```{r}
+###Statistics###
+
+res <- t.test(as.numeric(df_h2rn_inter_2_spike$V1), as.numeric(df_h2rn_non_2_spike$V1), var.equal = FALSE)
+```
+
+## Final Check of Coordinate Differences
+```{r}
+checking_if_different<- intersect(as.data.frame(coord_bips_flywire),as.data.frame(coord_bips_inter_flywire))
+```
+
+
+
+
+

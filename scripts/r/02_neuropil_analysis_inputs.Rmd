@@ -1,0 +1,671 @@
+---
+title: "Neuropil Analysis Inputs Public Release"
+author: "Filipa Torrão & Eugenia Chiappe"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+editor_options: 
+  chunk_output_type: console
+---
+
+## Introduction
+
+This document loads the required packages, downloads and processes FlyWire data for neuropil analysis, and saves CSV outputs to an output directory located two levels above the current working directory.
+
+## Setup
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load required packages
+library(arrow)
+#if (!requireNamespace("natmanager")) install.packages("natmanager")
+#natmanager::install(pkgs = "fafbseg")
+library(fafbseg)
+library(dplyr)
+library(ggpubr)
+library(ggplot2)
+
+# Define helper operator
+'%!in%' <- function(x, y) !('%in%'(x, y))
+
+# set up token - will open your browser to generate a new token. Required to access FlyWire database
+flywire_set_token("") # This token can be requested from flywire.ai
+
+# report what version of flywire data dump you have available
+# or tell you where to get it if you don't have it
+version <- flywire_connectome_data_version()
+version <- 630
+# flywi_630 = try(flywire_connectome_data( version=630), silent=TRUE)
+
+# Create output directories if they don't exist
+output_dir <- file.path("..", "..", "results", "r_results", "02_inputs_analysis")
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE)
+}
+```
+
+## bIPS Analysis
+
+```{r}
+### Find list of flywire ids that are the inputs onto bips
+
+## Load a FlyWire neuron and its synapses, produce a volumetric mesh and visualize
+# Cell IDs in FlyWire change every time an edit is made. This function gives you the latest supervoxel ID of a given cell (or multiple cells)
+bIPS.skid <- flywire_latestid('720575940622581173', version = 630)
+
+# find the id matching available flywire data dump version
+qid = flywire_latestid(bIPS.skid, version = 630)
+download_flywire_release_data('all', version = 630)
+
+bips_old = flywire_partner_summary2(qid, partners = 'in',
+                                    add_cell_types = F, threshold = 3, version = 630)
+
+# select the input synapses of the upstream partners
+post = flywire_connectome_data('post')
+bips_oldout = post %>%
+  filter(post_pt_root_id %in% bips_old$pre_pt_root_id) %>%
+  collect()
+
+neuropils_bips_inputs <- bips_oldout
+
+## only keep the region with most dendritic inputs, for each input onto bips
+list_by_input <- split(neuropils_bips_inputs, neuropils_bips_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_bips_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+neuropils_bips_inputs_max_only$bIPS <- "bIPS"
+neuropils_bips_inputs_max_only$Cell <- as.character(neuropils_bips_inputs_max_only$post_pt_root_id)
+
+bIPS.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+
+list_by_input_n_onto_bips <- split(bIPS.Allinputs, bIPS.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_bips <- lapply(list_by_input_n_onto_bips, function(x) x$weight)
+n_inputs_onto_bips_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_bips))
+n_inputs_onto_bips_by_cell$Cell <- as.character(rownames(n_inputs_onto_bips_by_cell))
+
+test_ch <- unique(n_inputs_onto_bips_by_cell$Cell)
+
+neurpils_merge_inputs <- merge(neuropils_bips_inputs_max_only, n_inputs_onto_bips_by_cell, by = "Cell")
+neurpils_merge_inputs <- neurpils_merge_inputs[which(neurpils_merge_inputs$V1 > 3),] # remove ones with less than 3 outputs onto bIPS
+
+list_inputs_onto_bips_input_dist <- list_by_input[neurpils_merge_inputs$Cell] # for cells that have more than 3 inputs onto bIPS, look at their respective inputs
+n_inputs_per_input_bips <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_bips_input_dist, function(x) sum(x$count)))) # number of inputs per cell
+
+neurpils_merge_inputs$neuropil_correct <- neurpils_merge_inputs$neuropil
+n_inputs_onto_bips_by_neuropil <- split(neurpils_merge_inputs, neurpils_merge_inputs$neuropil_correct)
+n_inputs_onto_bips_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_bips_by_neuropil, function(x) sum(x$V1))))
+n_inputs_onto_bips_by_neuropil$neuropil <- row.names(n_inputs_onto_bips_by_neuropil)
+
+# changing neuropils' names
+neurpils_merge_inputs$neuropil_correct_2 <- neurpils_merge_inputs$neuropil_correct
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+neurpils_merge_inputs$neuropil_correct_2[neurpils_merge_inputs$neuropil_correct_2 %!in% 
+                                           c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+
+neurpils_merge_inputs <- neurpils_merge_inputs[!duplicated(neurpils_merge_inputs$Cell),] # only keep one neuropil if tied
+
+# finding total number of input synapses by cell that outputs onto bIPS
+list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+neuropils_bips_inputs_all <- as.data.frame(list_by_input_dendritic)
+neuropils_bips_inputs_all$Total_inputs <- neuropils_bips_inputs_all$V1
+neuropils_bips_inputs_all$Cell <- substring(rownames(neuropils_bips_inputs_all), 2)
+neuropils_bips_inputs_all <- neuropils_bips_inputs_all[, -1]
+
+neurpils_merge_inputs_3 <- merge(neurpils_merge_inputs, neuropils_bips_inputs_all, by = "Cell")
+
+# finding total number of upstream neurons by cell that outputs onto bIPS
+list_bips_inputs_greg <- as.list(neurpils_merge_inputs_3$Cell)
+n_downstream_per_bips_input <- lapply(list_bips_inputs_greg, function(x) 
+  c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+)
+df_n_downstream_per_bips_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_bips_input)))
+colnames(df_n_downstream_per_bips_input) <- c("Cell", "N_downstream_neurons")
+
+neurpils_merge_inputs_4 <- merge(neurpils_merge_inputs_3, df_n_downstream_per_bips_input, by = "Cell")
+colnames(neurpils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "bIPS", "n_outputs_onto_bips",
+                                       "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+
+# do visual inspection of cells with less than 200 inputs to check if they are neck or not neurons
+ids_to_check <- neurpils_merge_inputs_4[which(neurpils_merge_inputs_4$Total_inputs < 200 & neurpils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+print(ids_to_check)
+# not_neurons <- c("720575940620136545")
+necks <- c("720575940631372088", "720575940618086535", "720575940630652876", "720575940626333971", "720575940602430944",
+           "720575940611552370", "720575940618086535", "720575940620809599", "720575940623747984", "720575940626333971",
+           "720575940626621317", "720575940630652876", "720575940631372088", "720575940632530913", "720575940634523232",
+           "720575940638745060")
+not_neurons <- c("720575940620136545")
+neurpils_merge_inputs_4$neuropil_correct_2[neurpils_merge_inputs_4$Cell %in% necks] <- "VNC" # for neck
+neurpils_merge_inputs_4$neuropil_correct_2[neurpils_merge_inputs_4$Cell %in% not_neurons] <- "Not neuron" # for not neurons
+neurpils_merge_inputs_4 <- filter(neurpils_merge_inputs_4, neurpils_merge_inputs_4$neuropil_correct_2 != "Not neuron")
+
+# Reorder Neuropil_max factor levels
+neurpils_merge_inputs_4$neuropil_correct_2 <- factor(neurpils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","SAD","SPS","GNG","IPS","ME","LOP"))
+
+# Plot and save bIPS inputs
+p_bips <- ggplot(neurpils_merge_inputs_4, aes(x = bIPS, y = n_outputs_onto_bips, fill = neuropil_correct_2)) +
+  geom_bar(position = "fill", stat = "identity") +
+  xlab("Neuropil for inputs of every input onto bIPS") + 
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
+print(p_bips)
+ggsave(filename = file.path(output_dir, "bips_inputs_public.png"), plot = p_bips, width = 6, height = 4)
+inputs_bips <- neurpils_merge_inputs_4
+write.csv(inputs_bips, file = file.path(output_dir, "bips_inputs_public.csv"), row.names = FALSE)
+```
+
+## H2RN Analysis 
+
+```{r}
+h2rn.skid <- flywire_latestid(c('720575940642076576','720575940617566769','720575940624756836',
+                                '720575940622082451','720575940621865991','720575940619291083'))
+qid <- flywire_latestid(h2rn.skid, version = 630)
+h2rn_old <- flywire_partner_summary2(qid, partners = 'in', add_cell_types = F, threshold = 3, version = version)
+post <- flywire_connectome_data('post')
+h2rn_oldout <- post %>%
+  filter(post_pt_root_id %in% h2rn_old$pre_pt_root_id) %>%
+  collect()
+neuropils_h2rn_inputs <- h2rn_oldout
+
+list_by_input <- split(neuropils_h2rn_inputs, neuropils_h2rn_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_h2rn_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+neuropils_h2rn_inputs_max_only$h2rn <- "h2rn"
+neuropils_h2rn_inputs_max_only$Cell <- as.character(neuropils_h2rn_inputs_max_only$post_pt_root_id)
+
+h2rn.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+list_by_input_n_onto_h2rn <- split(h2rn.Allinputs, h2rn.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_h2rn <- lapply(list_by_input_n_onto_h2rn, function(x) sum(x$weight))
+n_inputs_onto_h2rn_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_h2rn))
+n_inputs_onto_h2rn_by_cell$Cell <- as.character(rownames(n_inputs_onto_h2rn_by_cell))
+
+neuropils_merge_inputs <- merge(neuropils_h2rn_inputs_max_only, n_inputs_onto_h2rn_by_cell, by = "Cell")
+neuropils_merge_inputs <- neuropils_merge_inputs[which(neuropils_merge_inputs$V1 > 3),]
+
+list_inputs_onto_h2rn_input_dist <- list_by_input[neuropils_merge_inputs$Cell]
+n_inputs_per_input_h2rn <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_h2rn_input_dist, function(x) sum(x$count))))
+
+neuropils_merge_inputs$neuropil_correct <- neuropils_merge_inputs$neuropil
+n_inputs_onto_h2rn_by_neuropil <- split(neuropils_merge_inputs, neuropils_merge_inputs$neuropil_correct)
+n_inputs_onto_h2rn_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_h2rn_by_neuropil, function(x) sum(x$V1))))
+n_inputs_onto_h2rn_by_neuropil$neuropil <- row.names(n_inputs_onto_h2rn_by_neuropil)
+
+# Changing neuropils' names for h2rn
+neuropils_merge_inputs$neuropil_correct_2 <- neuropils_merge_inputs$neuropil_correct
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct_2 %!in% 
+                                            c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+
+neuropils_merge_inputs <- neuropils_merge_inputs[!duplicated(neuropils_merge_inputs$Cell),]
+
+# Finding total number of input synapses for h2rn
+list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+neuropils_h2rn_inputs_all <- as.data.frame(list_by_input_dendritic)
+neuropils_h2rn_inputs_all$Total_inputs <- neuropils_h2rn_inputs_all$V1
+neuropils_h2rn_inputs_all$Cell <- substring(rownames(neuropils_h2rn_inputs_all), 2)
+neuropils_h2rn_inputs_all <- neuropils_h2rn_inputs_all[, -1]
+
+neuropils_merge_inputs_3 <- merge(neuropils_merge_inputs, neuropils_h2rn_inputs_all, by = "Cell")
+
+# Finding total number of upstream neurons for h2rn
+list_h2rn_inputs_greg <- as.list(neuropils_merge_inputs_3$Cell)
+n_downstream_per_h2rn_input <- lapply(list_h2rn_inputs_greg, function(x) 
+  c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+)
+df_n_downstream_per_h2rn_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_h2rn_input)))
+colnames(df_n_downstream_per_h2rn_input) <- c("Cell", "N_downstream_neurons")
+
+neuropils_merge_inputs_4 <- merge(neuropils_merge_inputs_3, df_n_downstream_per_h2rn_input, by = "Cell")
+colnames(neuropils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "h2rn", "n_outputs_onto_h2rn",
+                                        "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+
+# Visual inspection for h2rn: check cells with less than 200 inputs
+ids_to_check <- neuropils_merge_inputs_4[which(neuropils_merge_inputs_4$Total_inputs < 200 & neuropils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+print(ids_to_check)
+necks <- c("720575940631372088","720575940618086535","720575940630652876","720575940626333971","720575940613096111")
+neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% necks] <- "VNC" 
+
+# Reorder Neuropil_max factor levels
+neuropils_merge_inputs_4$neuropil_correct_2 <- factor(neuropils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","Other","SPS","LAL","GNG","IPS","ME","LOP"))
+
+# Plot and save h2rn inputs
+p_h2rn <- ggplot(neuropils_merge_inputs_4, aes(x = h2rn, y = n_outputs_onto_h2rn, fill = neuropil_correct_2)) +
+  geom_bar(position = "fill", stat = "identity") + 
+  xlab("Neuropil for inputs of every input onto H2rn") +
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
+print(p_h2rn)
+ggsave(filename = file.path(output_dir, "h2rn_inputs_public.png"), plot = p_h2rn, width = 6, height = 4)
+
+inputs_h2rn <- neuropils_merge_inputs_4
+write.csv(inputs_h2rn, file = file.path(output_dir, "h2rn_inputs_public.csv"), row.names = FALSE)
+
+```
+
+## uLPTCrn Analysis
+
+```{r}
+ulptcids <- c("720575940628599516", "720575940631296543", "720575940631333955", "720575940612144047", 
+              "720575940606873522", "720575940647708537", "720575940626988053")
+qid <- ulptcids
+
+ulptcrn_old <- flywire_partner_summary2(qid, partners = 'in', add_cell_types = F, threshold = 3, version = version)
+post <- flywire_connectome_data('post')
+ulptcrn_oldout <- post %>%
+  filter(post_pt_root_id %in% ulptcrn_old$pre_pt_root_id) %>%
+  collect()
+neuropils_ulptcrn_inputs <- ulptcrn_oldout
+
+list_by_input <- split(neuropils_ulptcrn_inputs, neuropils_ulptcrn_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_ulptcrn_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+neuropils_ulptcrn_inputs_max_only$ulptcrn <- "ulptcrn"
+neuropils_ulptcrn_inputs_max_only$Cell <- as.character(neuropils_ulptcrn_inputs_max_only$post_pt_root_id)
+
+ulptcrn.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+list_by_input_n_onto_ulptcrn <- split(ulptcrn.Allinputs, ulptcrn.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_ulptcrn <- lapply(list_by_input_n_onto_ulptcrn, function(x) sum(x$weight))
+n_inputs_onto_ulptcrn_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_ulptcrn))
+n_inputs_onto_ulptcrn_by_cell$Cell <- as.character(rownames(n_inputs_onto_ulptcrn_by_cell))
+
+neuropils_merge_inputs <- merge(neuropils_ulptcrn_inputs_max_only, n_inputs_onto_ulptcrn_by_cell, by = "Cell")
+neuropils_merge_inputs <- neuropils_merge_inputs[which(neuropils_merge_inputs$V1 > 3),]
+
+list_inputs_onto_ulptcrn_input_dist <- list_by_input[neuropils_merge_inputs$Cell]
+n_inputs_per_input_ulptcrn <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_ulptcrn_input_dist, function(x) sum(x$count))))
+
+neuropils_merge_inputs$neuropil_correct <- neuropils_merge_inputs$neuropil
+n_inputs_onto_ulptcrn_by_neuropil <- split(neuropils_merge_inputs, neuropils_merge_inputs$neuropil_correct)
+n_inputs_onto_ulptcrn_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_ulptcrn_by_neuropil, function(x) sum(x$V1))))
+n_inputs_onto_ulptcrn_by_neuropil$neuropil <- row.names(n_inputs_onto_ulptcrn_by_neuropil)
+
+# Changing neuropils' names for ulptcrn
+neuropils_merge_inputs$neuropil_correct_2 <- neuropils_merge_inputs$neuropil_correct
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct_2 %!in% 
+                                            c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+
+neuropils_merge_inputs <- neuropils_merge_inputs[!duplicated(neuropils_merge_inputs$Cell),]
+
+# Finding total number of input synapses for ulptcrn
+list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+neuropils_ulptcrn_inputs_all <- as.data.frame(list_by_input_dendritic)
+neuropils_ulptcrn_inputs_all$Total_inputs <- neuropils_ulptcrn_inputs_all$V1
+neuropils_ulptcrn_inputs_all$Cell <- substring(rownames(neuropils_ulptcrn_inputs_all), 2)
+neuropils_ulptcrn_inputs_all <- neuropils_ulptcrn_inputs_all[, -1]
+
+neuropils_merge_inputs_3 <- merge(neuropils_merge_inputs, neuropils_ulptcrn_inputs_all, by = "Cell")
+
+# Finding total number of upstream neurons for ulptcrn
+list_ulptcrn_inputs_greg <- as.list(neuropils_merge_inputs_3$Cell)
+n_downstream_per_ulptcrn_input <- lapply(list_ulptcrn_inputs_greg, function(x) 
+  c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+)
+df_n_downstream_per_ulptcrn_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_ulptcrn_input)))
+colnames(df_n_downstream_per_ulptcrn_input) <- c("Cell", "N_downstream_neurons")
+
+neuropils_merge_inputs_4 <- merge(neuropils_merge_inputs_3, df_n_downstream_per_ulptcrn_input, by = "Cell")
+colnames(neuropils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "ulptcrn", "n_outputs_onto_ulptcrn",
+                                        "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+
+# Visual inspection for ulptcrn: check cells with less than 200 inputs
+ids_to_check <- neuropils_merge_inputs_4[which(neuropils_merge_inputs_4$Total_inputs < 200 & neuropils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+print(ids_to_check)
+necks <- c("720575940631372088", "720575940618086535", "720575940630652876", "720575940626333971", "720575940623854276",
+           "720575940623854276", "720575940634523232", "720575940637993542")
+neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% necks] <- "VNC" 
+
+
+# Reorder Neuropil_max factor levels
+neuropils_merge_inputs_4$neuropil_correct_2 <- factor(neuropils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","Other","SAD","SPS","LAL","GNG","IPS","ME","LOP"))
+
+# Plot and save ulptcrn inputs
+p_ulptcrn <- ggplot(neuropils_merge_inputs_4, aes(x = ulptcrn, y = n_outputs_onto_ulptcrn, fill = neuropil_correct_2)) +
+  geom_bar(position = "fill", stat = "identity") + 
+  xlab("Neuropil for inputs of every input onto ulptcrn") +
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
+print(p_ulptcrn)
+ggsave(filename = file.path(output_dir, "ulptcrn_inputs_public.png"), plot = p_ulptcrn, width = 6, height = 4)
+
+inputs_ulptcrn <- neuropils_merge_inputs_4
+write.csv(inputs_ulptcrn, file = file.path(output_dir, "ulptcrn_inputs_public_release.csv"), row.names = FALSE)
+
+```
+
+## bLPTCrn Analysis
+
+```{r}
+blptcrn.skid <- c("720575940628284931", "720575940634632078", "720575940624461543",
+                  "720575940608760110", "720575940620555696")
+blptcrn <- c("720575940608760110", "720575940620555696", "720575940624461543",
+             "720575940628284931", "720575940605344434")
+blptcrn.skid <- flywire_latestid(blptcrn.skid)
+qid <- blptcrn
+
+blptcrn_old <- flywire_partner_summary2(qid, partners = 'in', add_cell_types = F, threshold = 3, version = version)
+post <- flywire_connectome_data('post')
+blptcrn_oldout <- post %>%
+  filter(post_pt_root_id %in% blptcrn_old$pre_pt_root_id) %>%
+  collect()
+neuropils_blptcrn_inputs <- blptcrn_oldout
+
+list_by_input <- split(neuropils_blptcrn_inputs, neuropils_blptcrn_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_blptcrn_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+neuropils_blptcrn_inputs_max_only$blptcrn <- "blptcrn"
+neuropils_blptcrn_inputs_max_only$Cell <- as.character(neuropils_blptcrn_inputs_max_only$post_pt_root_id)
+
+blptcrn.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+list_by_input_n_onto_blptcrn <- split(blptcrn.Allinputs, blptcrn.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_blptcrn <- lapply(list_by_input_n_onto_blptcrn, function(x) sum(x$weight))
+n_inputs_onto_blptcrn_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_blptcrn))
+n_inputs_onto_blptcrn_by_cell$Cell <- as.character(rownames(n_inputs_onto_blptcrn_by_cell))
+
+neuropils_merge_inputs <- merge(neuropils_blptcrn_inputs_max_only, n_inputs_onto_blptcrn_by_cell, by = "Cell")
+neuropils_merge_inputs <- neuropils_merge_inputs[which(neuropils_merge_inputs$V1 > 3),]
+
+list_inputs_onto_blptcrn_input_dist <- list_by_input[neuropils_merge_inputs$Cell]
+n_inputs_per_input_blptcrn <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_blptcrn_input_dist, function(x) sum(x$count))))
+
+neuropils_merge_inputs$neuropil_correct <- neuropils_merge_inputs$neuropil
+n_inputs_onto_blptcrn_by_neuropil <- split(neuropils_merge_inputs, neuropils_merge_inputs$neuropil_correct)
+n_inputs_onto_blptcrn_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_blptcrn_by_neuropil, function(x) sum(x$V1))))
+n_inputs_onto_blptcrn_by_neuropil$neuropil <- row.names(n_inputs_onto_blptcrn_by_neuropil)
+
+# Changing neuropils' names for blptcrn
+neuropils_merge_inputs$neuropil_correct_2 <- neuropils_merge_inputs$neuropil_correct
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct_2 %!in% 
+                                            c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+
+neuropils_merge_inputs <- neuropils_merge_inputs[!duplicated(neuropils_merge_inputs$Cell),]
+
+# Finding total number of input synapses for blptcrn
+list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+neuropils_blptcrn_inputs_all <- as.data.frame(list_by_input_dendritic)
+neuropils_blptcrn_inputs_all$Total_inputs <- neuropils_blptcrn_inputs_all$V1
+neuropils_blptcrn_inputs_all$Cell <- substring(rownames(neuropils_blptcrn_inputs_all), 2)
+neuropils_blptcrn_inputs_all <- neuropils_blptcrn_inputs_all[, -1]
+
+neuropils_merge_inputs_3 <- merge(neuropils_merge_inputs, neuropils_blptcrn_inputs_all, by = "Cell")
+
+# Finding total number of upstream neurons for blptcrn
+list_blptcrn_inputs_greg <- as.list(neuropils_merge_inputs_3$Cell)
+n_downstream_per_blptcrn_input <- lapply(list_blptcrn_inputs_greg, function(x) 
+  c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+)
+df_n_downstream_per_blptcrn_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_blptcrn_input)))
+colnames(df_n_downstream_per_blptcrn_input) <- c("Cell", "N_downstream_neurons")
+
+neuropils_merge_inputs_4 <- merge(neuropils_merge_inputs_3, df_n_downstream_per_blptcrn_input, by = "Cell")
+colnames(neuropils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "blptcrn", "n_outputs_onto_blptcrn",
+                                        "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+
+# Visual inspection for blptcrn: check cells with less than 200 inputs
+ids_to_check <- neuropils_merge_inputs_4[which(neuropils_merge_inputs_4$Total_inputs < 200 & neuropils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+print(ids_to_check)
+necks <- c("720575940631372088", "720575940618086535", "720575940630652876", "720575940626333971", "720575940623854276",
+           "720575940610821654", "720575940623747984", "720575940626621317")
+others <- c("720575940613096111")
+neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% necks] <- "VNC"
+neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% others] <- "Other"
+
+# Reorder Neuropil_max factor levels
+neuropils_merge_inputs_4$neuropil_correct_2 <- factor(neuropils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","Other","SAD","SPS","GNG","IPS","ME","LOP"))
+
+# Plot and save blptcrn inputs
+p_blptcrn <- ggplot(neuropils_merge_inputs_4, aes(x = blptcrn, y = n_outputs_onto_blptcrn, fill = neuropil_correct_2)) +
+  geom_bar(position = "fill", stat = "identity") + 
+  xlab("Neuropil for inputs of every input onto bLPTCrn") +
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
+print(p_blptcrn)
+ggsave(filename = file.path(output_dir, "blptcrn_inputs_public.png"), plot = p_blptcrn, width = 6, height = 4)
+
+inputs_blptcrn <- neuropils_merge_inputs_4
+write.csv(inputs_blptcrn, file = file.path(output_dir, "blptcrn_inputs_public_release.csv"), row.names = FALSE)
+
+```
+
+## cLPTCrn Analysis
+
+```{r}
+clptcrn.skid <- c("720575940617997396", "720575940619872751", "720575940620867254", "720575940621147425",
+                  "720575940625557069", "720575940620263088", "720575940629267531", "720575940628688246")
+clptcrn.skid <- flywire_latestid(clptcrn.skid)
+clptcrn <- c("720575940617997396", "720575940625557069", "720575940620867254", "720575940629267531",
+             "720575940620263088", "720575940628688246", "720575940619872751", "720575940621147425")
+qid <- flywire_latestid(clptcrn.skid, version = flywire_connectome_data_version())
+qid <- clptcrn
+clptcrn_old <- flywire_partner_summary2(qid, partners = 'in', add_cell_types = F, threshold = 3, version = version)
+post <- flywire_connectome_data('post')
+clptcrn_oldout <- post %>%
+  filter(post_pt_root_id %in% clptcrn_old$pre_pt_root_id) %>%
+  collect()
+neuropils_clptcrn_inputs <- clptcrn_oldout
+
+list_by_input <- split(neuropils_clptcrn_inputs, neuropils_clptcrn_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_clptcrn_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+neuropils_clptcrn_inputs_max_only$clptcrn <- "clptcrn"
+neuropils_clptcrn_inputs_max_only$Cell <- as.character(neuropils_clptcrn_inputs_max_only$post_pt_root_id)
+
+clptcrn.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+list_by_input_n_onto_clptcrn <- split(clptcrn.Allinputs, clptcrn.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_clptcrn <- lapply(list_by_input_n_onto_clptcrn, function(x) sum(x$weight))
+n_inputs_onto_clptcrn_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_clptcrn))
+n_inputs_onto_clptcrn_by_cell$Cell <- as.character(rownames(n_inputs_onto_clptcrn_by_cell))
+
+neuropils_merge_inputs <- merge(neuropils_clptcrn_inputs_max_only, n_inputs_onto_clptcrn_by_cell, by = "Cell")
+neuropils_merge_inputs <- neuropils_merge_inputs[which(neuropils_merge_inputs$V1 > 3),]
+
+list_inputs_onto_clptcrn_input_dist <- list_by_input[neuropils_merge_inputs$Cell]
+n_inputs_per_input_clptcrn <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_clptcrn_input_dist, function(x) sum(x$count))))
+
+neuropils_merge_inputs$neuropil_correct <- neuropils_merge_inputs$neuropil
+n_inputs_onto_clptcrn_by_neuropil <- split(neuropils_merge_inputs, neuropils_merge_inputs$neuropil_correct)
+n_inputs_onto_clptcrn_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_clptcrn_by_neuropil, function(x) sum(x$V1))))
+n_inputs_onto_clptcrn_by_neuropil$neuropil <- row.names(n_inputs_onto_clptcrn_by_neuropil)
+
+# Changing neuropils' names for clptcrn
+neuropils_merge_inputs$neuropil_correct_2 <- neuropils_merge_inputs$neuropil_correct
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct_2 %!in% 
+                                            c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+
+neuropils_merge_inputs <- neuropils_merge_inputs[!duplicated(neuropils_merge_inputs$Cell),]
+
+# Finding total number of input synapses for clptcrn
+list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+neuropils_clptcrn_inputs_all <- as.data.frame(list_by_input_dendritic)
+neuropils_clptcrn_inputs_all$Total_inputs <- neuropils_clptcrn_inputs_all$V1
+neuropils_clptcrn_inputs_all$Cell <- substring(rownames(neuropils_clptcrn_inputs_all), 2)
+neuropils_clptcrn_inputs_all <- neuropils_clptcrn_inputs_all[, -1]
+
+neuropils_merge_inputs_3 <- merge(neuropils_merge_inputs, neuropils_clptcrn_inputs_all, by = "Cell")
+
+# Finding total number of upstream neurons for clptcrn
+list_clptcrn_inputs_greg <- as.list(neuropils_merge_inputs_3$Cell)
+n_downstream_per_clptcrn_input <- lapply(list_clptcrn_inputs_greg, function(x) 
+  c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+)
+df_n_downstream_per_clptcrn_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_clptcrn_input)))
+colnames(df_n_downstream_per_clptcrn_input) <- c("Cell", "N_downstream_neurons")
+
+neuropils_merge_inputs_4 <- merge(neuropils_merge_inputs_3, df_n_downstream_per_clptcrn_input, by = "Cell")
+colnames(neuropils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "clptcrn", "n_outputs_onto_clptcrn",
+                                        "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+
+# Visual inspection for clptcrn: check cells with less than 200 inputs
+ids_to_check <- neuropils_merge_inputs_4[which(neuropils_merge_inputs_4$Total_inputs < 200 & neuropils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+print(ids_to_check)
+necks <- c("720575940631372088", "720575940618086535", "720575940630652876", "720575940626333971", "720575940623854276",
+           "720575940606303755", "720575940618647768", "720575940623854276", "720575940627108967", "720575940645125508")
+neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% necks] <- "VNC"
+
+# Reorder Neuropil_max factor levels
+neuropils_merge_inputs_4$neuropil_correct_2 <- factor(neuropils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","Other","LAL","SPS","GNG","IPS","ME","LOP"))
+
+
+# Plot and save clptcrn inputs
+p_clptcrn <- ggplot(neuropils_merge_inputs_4, aes(x = clptcrn, y = n_outputs_onto_clptcrn, fill = neuropil_correct_2)) +
+  geom_bar(position = "fill", stat = "identity") + 
+  xlab("Neuropil for inputs of every input onto cLPTCrn") +
+  scale_y_continuous(breaks = seq(0, 1, 0.1))
+print(p_clptcrn)
+ggsave(filename = file.path(output_dir, "clptcrn_inputs_public.png"), plot = p_clptcrn, width = 6, height = 4)
+
+inputs_clptcrn <- neuropils_merge_inputs_4
+write.csv(inputs_clptcrn, file = file.path(output_dir, "clptcrn_inputs_public_release.csv"), row.names = FALSE)
+
+```
+
+## DNp15 Analysis
+
+```{r}
+dnp15.skid <- "720575940610301413"
+dnp15.skid <- flywire_latestid(dnp15.skid, version = version)
+qid <- dnp15.skid
+
+# Retrieve upstream partner summary with threshold = 3
+dnp15_old <- flywire_partner_summary2(qid, partners = 'in', add_cell_types = F, threshold = 3, version = version)
+post <- flywire_connectome_data('post')
+dnp15_oldout <- post %>%
+  filter(post_pt_root_id %in% dnp15_old$pre_pt_root_id) %>%
+  collect()
+neuropils_dnp15_inputs <- dnp15_oldout
+
+# For each input cell, keep only the row with the maximum "count"
+list_by_input <- split(neuropils_dnp15_inputs, neuropils_dnp15_inputs$post_pt_root_id)
+list_by_input_max_dendritic <- lapply(list_by_input, function(x) x[which(x$count == max(x$count)),])
+neuropils_dnp15_inputs_max_only <- do.call(rbind, list_by_input_max_dendritic)
+
+neuropils_dnp15_inputs_max_only$dnp15 <- "dnp15"
+neuropils_dnp15_inputs_max_only$Cell <- as.character(neuropils_dnp15_inputs_max_only$post_pt_root_id)
+
+
+# Retrieve all upstream inputs (again with threshold = 3)
+dnp15.Allinputs <- flywire_partner_summary2(qid, partners = "in", add_cell_types = F, version = version)
+list_by_input_n_onto_dnp15 <- split(dnp15.Allinputs, dnp15.Allinputs$pre_pt_root_id)
+list_by_input_n_inputs_onto_dnp15 <- lapply(list_by_input_n_onto_dnp15, function(x) sum(x$weight))
+n_inputs_onto_dnp15_by_cell <- as.data.frame(do.call(rbind, list_by_input_n_inputs_onto_dnp15))
+n_inputs_onto_dnp15_by_cell$Cell <- as.character(rownames(n_inputs_onto_dnp15_by_cell))
+
+neuropils_merge_inputs <- merge(neuropils_dnp15_inputs_max_only, n_inputs_onto_dnp15_by_cell, by = "Cell")
+neuropils_merge_inputs <- neuropils_merge_inputs[which(neuropils_merge_inputs$V1 > 3),]
+
+  list_inputs_onto_dnp15_input_dist <- list_by_input[neuropils_merge_inputs$Cell]
+  n_inputs_per_input_dnp15 <- as.data.frame(do.call(rbind, lapply(list_inputs_onto_dnp15_input_dist, function(x) sum(x$count))))
+  
+  neuropils_merge_inputs$neuropil_correct <- neuropils_merge_inputs$neuropil
+  n_inputs_onto_dnp15_by_neuropil <- split(neuropils_merge_inputs, neuropils_merge_inputs$neuropil_correct)
+  n_inputs_onto_dnp15_by_neuropil <- as.data.frame(do.call(rbind, lapply(n_inputs_onto_dnp15_by_neuropil, function(x) sum(x$V1))))
+  n_inputs_onto_dnp15_by_neuropil$neuropil <- row.names(n_inputs_onto_dnp15_by_neuropil)
+  
+  # Changing neuropils' names for dnp15
+  neuropils_merge_inputs$neuropil_correct_2 <- neuropils_merge_inputs$neuropil_correct
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_L"] <- "IPS" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "IPS_R"] <- "IPS" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_R"] <- "SPS" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "SPS_L"] <- "SPS"
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_L"] <- "LOP" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LOP_R"] <- "LOP" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_L"] <- "ME" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "ME_R"] <- "ME" 
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_R"] <- "LAL"
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct == "LAL_L"] <- "LAL"
+  
+  neuropils_merge_inputs$neuropil_correct_2[neuropils_merge_inputs$neuropil_correct_2 %!in% 
+                                              c("GNG", "IPS", "SPS", "LOP", "ME", "SAD", "VNC", "LAL")] <- "Other"
+  
+  neuropils_merge_inputs <- neuropils_merge_inputs[!duplicated(neuropils_merge_inputs$Cell),]
+  
+  # Finding total number of input synapses for dnp15
+  list_by_input_dendritic <- t(as.data.frame(lapply(list_by_input, function(x) sum(x$count))))
+  neuropils_dnp15_inputs_all <- as.data.frame(list_by_input_dendritic)
+  neuropils_dnp15_inputs_all$Total_inputs <- neuropils_dnp15_inputs_all$V1
+  neuropils_dnp15_inputs_all$Cell <- substring(rownames(neuropils_dnp15_inputs_all), 2)
+  neuropils_dnp15_inputs_all <- neuropils_dnp15_inputs_all[, -1]
+  
+  neuropils_merge_inputs_3 <- merge(neuropils_merge_inputs, neuropils_dnp15_inputs_all, by = "Cell")
+  
+  # Finding total number of upstream neurons for dnp15
+  list_dnp15_inputs_greg <- as.list(neuropils_merge_inputs_3$Cell)
+  n_downstream_per_dnp15_input <- lapply(list_dnp15_inputs_greg, function(x) 
+    c(x, nrow(flywire_partner_summary2(x, partners = 'in', add_cell_types = F, threshold = 0, version = version)))
+  )
+  df_n_downstream_per_dnp15_input <- as.data.frame(t.data.frame(as.data.frame(n_downstream_per_dnp15_input)))
+  colnames(df_n_downstream_per_dnp15_input) <- c("Cell", "N_downstream_neurons")
+  
+  neuropils_merge_inputs_4 <- merge(neuropils_merge_inputs_3, df_n_downstream_per_dnp15_input, by = "Cell")
+  colnames(neuropils_merge_inputs_4) <- c("Cell", "post_pt_root_id", "neuropil", "n_inputs_on_neuropil", "dnp15", "n_outputs_onto_dnp15",
+                                          "neuropil_correct", "neuropil_correct_2", "Total_inputs", "N_upstream_neurons")
+  
+  # Visual inspection for dnp15: check cells with less than 200 inputs
+  ids_to_check <- neuropils_merge_inputs_4[which(neuropils_merge_inputs_4$Total_inputs < 200 & neuropils_merge_inputs_4$neuropil_correct_2 != "VNC"),]$Cell
+  print(ids_to_check)
+  necks <- c("720575940631372088", "720575940618086535", "720575940630652876", "720575940626333971", "720575940623854276",
+             "720575940615799179", "720575940621114974", "720575940631372088")
+  neuropils_merge_inputs_4$neuropil_correct_2[neuropils_merge_inputs_4$Cell %in% necks] <- "VNC"
+  
+  # Reorder Neuropil_max factor levels
+  neuropils_merge_inputs_4$neuropil_correct_2 <- factor(neuropils_merge_inputs_4$neuropil_correct_2, 
+                                                levels = c("VNC","Other","SAD","SPS","LAL","GNG","IPS","ME","LOP"))
+  
+  
+  # Plot and save dnp15 inputs
+  p_dnp15 <- ggplot(neuropils_merge_inputs_4, aes(x = dnp15, y = n_outputs_onto_dnp15, fill = neuropil_correct_2)) +
+    geom_bar(position = "fill", stat = "identity") + 
+    xlab("Neuropil for inputs of every input onto dnp15") +
+    scale_y_continuous(breaks = seq(0, 1, 0.1))
+  print(p_dnp15)
+  ggsave(filename = file.path(output_dir, "dnp15_inputs_public.png"), plot = p_dnp15, width = 6, height = 4)
+  write.csv(neuropils_merge_inputs_4, file = file.path(output_dir, "dnp15_inputs_public_release.csv"), row.names = FALSE)
+  ggsave(filename = file.path(output_dir, "dnp15_inputs_public_release.png"), plot = p_dnp15, width = 6, height = 4)
+```
