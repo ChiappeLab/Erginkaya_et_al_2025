@@ -47,7 +47,6 @@ This repository contains the accompanying code and raw data associated with the 
 |
 | data/                                       # Folder containing data files located in Zenodo
 | ├── Behavior/                                  # Behavior data for matlab scripts
-| ├── feather_files/                             # Feather files for R scripts
 | └── Preprocessed Data/                         # Preprocessed data for matlab scripts
 |
 | download_data_linux.sh                         # Script to download data on Linux/macOS
