@@ -45,7 +45,7 @@ This repository contains the accompanying code and raw data associated with the 
 |      ├── 04_rootpoint_dist.Rmd                 # R script for rootpoint distance analysis
 |      └── README.md                             # Acknowledgements and instructions for R scripts
 |
-| data/                                       # Folder containing data files located in Zenodo
+| data/                                        # Folder containing data files located in Zenodo
 | ├── Behavior/                                  # Behavior data for matlab scripts
 | └── Preprocessed Data/                         # Preprocessed data for matlab scripts
 |
